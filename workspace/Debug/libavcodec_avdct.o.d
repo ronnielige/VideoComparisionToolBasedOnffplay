@@ -1,0 +1,45 @@
+Debug/libavcodec_avdct.o: ../libavcodec/avdct.c ../libavcodec/avcodec.h \
+ libavutil/samplefmt.h libavutil/attributes.h libavutil/avutil.h \
+ libavutil/buffer.h libavutil/cpu.h libavutil/channel_layout.h \
+ libavutil/dict.h libavutil/frame.h libavutil/log.h libavutil/pixfmt.h \
+ libavutil/rational.h ../libavcodec/version.h libavutil/version.h \
+ ../libavcodec/idctdsp.h ../libavcodec/fdctdsp.h \
+ ../libavcodec/pixblockdsp.h ../libavcodec/avdct.h libavutil/opt.h
+
+../libavcodec/avcodec.h:
+
+libavutil/samplefmt.h:
+
+libavutil/attributes.h:
+
+libavutil/avutil.h:
+
+libavutil/buffer.h:
+
+libavutil/cpu.h:
+
+libavutil/channel_layout.h:
+
+libavutil/dict.h:
+
+libavutil/frame.h:
+
+libavutil/log.h:
+
+libavutil/pixfmt.h:
+
+libavutil/rational.h:
+
+../libavcodec/version.h:
+
+libavutil/version.h:
+
+../libavcodec/idctdsp.h:
+
+../libavcodec/fdctdsp.h:
+
+../libavcodec/pixblockdsp.h:
+
+../libavcodec/avdct.h:
+
+libavutil/opt.h:

@@ -1,0 +1,6 @@
+Debug/libavcodec_alac_data.o: ../libavcodec/alac_data.c \
+ libavutil/channel_layout.h ../libavcodec/alac_data.h
+
+libavutil/channel_layout.h:
+
+../libavcodec/alac_data.h:
