@@ -223,10 +223,15 @@ typedef struct VideoState {
     FrameQueue pictq;
     FrameQueue subpq;
     FrameQueue sampq;
-
+    FrameQueue pictq2;
+    FrameQueue subpq2;
+    FrameQueue sampq2;
     Decoder auddec;
     Decoder viddec;
     Decoder subdec;
+    Decoder auddec2;
+    Decoder viddec2;
+    Decoder subdec2;
 
     int viddec_width;
     int viddec_height;
@@ -242,7 +247,9 @@ typedef struct VideoState {
     double audio_diff_threshold;
     int audio_diff_avg_count;
     AVStream *audio_st;
+    AVStream *audio_st2;
     PacketQueue audioq;
+    PacketQueue audioq2;
     int audio_hw_buf_size;
     uint8_t *audio_buf;
     uint8_t *audio_buf1;
@@ -275,14 +282,18 @@ typedef struct VideoState {
 
     int subtitle_stream;
     AVStream *subtitle_st;
+    AVStream *subtitle_st2;
     PacketQueue subtitleq;
+    PacketQueue subtitleq2;
 
     double frame_timer;
     double frame_last_returned_time;
     double frame_last_filter_delay;
     int video_stream;
     AVStream *video_st;
+    AVStream *video_st2;
     PacketQueue videoq;
+    PacketQueue videoq2;
     double max_frame_duration;      // maximum duration of a frame - above this, we consider the jump a timestamp discontinuity
 #if !CONFIG_AVFILTER
     struct SwsContext *img_convert_ctx;
@@ -292,6 +303,7 @@ typedef struct VideoState {
     int eof;
 
     char *filename;
+    char *filename2;
     int width, height, xleft, ytop;
     int step;
 
@@ -3146,14 +3158,14 @@ static int read_thread(void *arg)
     return 0;
 }
 
-static VideoState *stream_open(const char *filename, AVInputFormat *iformat)
+static VideoState *stream_open(const char **filename, AVInputFormat *iformat)
 {
     VideoState *is;
 
     is = av_mallocz(sizeof(VideoState));
     if (!is)
         return NULL;
-    is->filename = av_strdup(filename);
+    is->filename = av_strdup(filename[0]);
     if (!is->filename)
         goto fail;
     is->iformat = iformat;
@@ -3172,6 +3184,26 @@ static VideoState *stream_open(const char *filename, AVInputFormat *iformat)
         packet_queue_init(&is->audioq) < 0 ||
         packet_queue_init(&is->subtitleq) < 0)
         goto fail;
+    
+    if(filename[1])  // if input two file, then init the second decoder
+    {
+        is->filename2 = av_strdup(filename[1]);
+        if (!is->filename2)
+            goto fail;
+        
+        /* start video display */
+        if (frame_queue_init(&is->pictq2, &is->videoq2, VIDEO_PICTURE_QUEUE_SIZE, 1) < 0)
+            goto fail;
+        if (frame_queue_init(&is->subpq2, &is->subtitleq2, SUBPICTURE_QUEUE_SIZE, 0) < 0)
+            goto fail;
+        if (frame_queue_init(&is->sampq2, &is->audioq2, SAMPLE_QUEUE_SIZE, 1) < 0)
+            goto fail;
+        
+        if (packet_queue_init(&is->videoq2) < 0 ||
+            packet_queue_init(&is->audioq2) < 0 ||
+            packet_queue_init(&is->subtitleq2) < 0)
+            goto fail;
+    }
 
     if (!(is->continue_read_thread = SDL_CreateCond())) {
         av_log(NULL, AV_LOG_FATAL, "SDL_CreateCond(): %s\n", SDL_GetError());
@@ -3304,10 +3336,10 @@ static void toggle_audio_display(VideoState *is)
 
 static void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
     double remaining_time = 0.0;
-    SDL_PumpEvents();
-    while (!SDL_PeepEvents(event, 1, SDL_GETEVENT, SDL_ALLEVENTS)) {
+    SDL_PumpEvents(); // Pumps the event loop, gathering events from the input devices.
+    while (!SDL_PeepEvents(event, 1, SDL_GETEVENT, SDL_ALLEVENTS)) { // Checks the event queue for messages and optionally returns them, SDL_GETEVENT means up to numevents events at the front of the event queue, matchingmask, will be returned and will be removed from the queue.
         if (!cursor_hidden && av_gettime_relative() - cursor_last_shown > CURSOR_HIDE_DELAY) {
-            SDL_ShowCursor(0);
+            SDL_ShowCursor(0);  // hide cursor after 1 seconds
             cursor_hidden = 1;
         }
         if (remaining_time > 0.0)
@@ -3623,15 +3655,16 @@ static int opt_show_mode(void *optctx, const char *opt, const char *arg)
 
 static void opt_input_file(void *optctx, const char *filename)
 {
-    if (input_filename[0]) {
+    char** i_fname = input_filename[0] == NULL? input_filename: input_filename + 1;
+    if (*i_fname) {
         av_log(NULL, AV_LOG_FATAL,
                "Argument '%s' provided as input filename, but '%s' was already specified.\n",
-                filename, input_filename);
+                filename, *i_fname);
         exit(1);
     }
     if (!strcmp(filename, "-"))
         filename = "pipe:";
-    input_filename[0] = filename;
+    *i_fname = filename;
 }
 
 static int opt_codec(void *optctx, const char *opt, const char *arg)
@@ -3797,6 +3830,7 @@ int main(int argc, char **argv)
     show_banner(argc, argv, options);
 
     parse_options(NULL, argc, argv, options, opt_input_file);
+    printf("input_filenames = %s %s\n", input_filename[0], input_filename[1]);
 
     if (!input_filename[0]) {
         show_usage();
@@ -3849,7 +3883,7 @@ int main(int argc, char **argv)
     av_init_packet(&flush_pkt);
     flush_pkt.data = (uint8_t *)&flush_pkt;
 
-    is = stream_open(input_filename[0], file_iformat);
+    is = stream_open(input_filename, file_iformat);
     if (!is) {
         av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState!\n");
         do_exit(NULL);

@@ -2148,7 +2148,7 @@
       </Compiler>
       <Linker Options="" Required="yes"/>
       <ResourceCompiler Options="" Required="no"/>
-      <General OutputFile="$(IntermediateDirectory)/$(ProjectName)" IntermediateDirectory="./Debug" Command="D:\Projects\ffmpeg-3.1.1\ffplay_g.exe " CommandArguments="-i E:\Bugs\wasu_seek_卡顿\1710153637_H2641024.mp4" UseSeparateDebugArgs="no" DebugArguments="" WorkingDirectory="D:/Projects/ffmpeg-3.1.1/" PauseExecWhenProcTerminates="no" IsGUIProgram="yes" IsEnabled="yes"/>
+      <General OutputFile="$(IntermediateDirectory)/$(ProjectName)" IntermediateDirectory="./Debug" Command="D:\Projects\ffmpeg-3.1.1\ffplay_g.exe " CommandArguments="E:\Bugs\wasu_seek_卡顿\1710153637_H2641024.mp4  E:\Bugs\wasu_seek_卡顿\1690415519_CBR_2.ts" UseSeparateDebugArgs="no" DebugArguments="" WorkingDirectory="D:/Projects/ffmpeg-3.1.1/" PauseExecWhenProcTerminates="no" IsGUIProgram="yes" IsEnabled="yes"/>
       <Environment EnvVarSetName="&lt;Use Defaults&gt;" DbgSetName="&lt;Use Defaults&gt;">
         <![CDATA[]]>
       </Environment>
