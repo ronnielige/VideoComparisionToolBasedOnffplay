@@ -322,7 +322,7 @@
 @c @set have-asm-mod-q no
 @set have-attribute-may-alias yes
 @set have-attribute-packed yes
-@c @set have-ebp-available no
+@set have-ebp-available yes
 @set have-ebx-available yes
 @c @set have-gnu-as no
 @c @set have-gnu-windres no

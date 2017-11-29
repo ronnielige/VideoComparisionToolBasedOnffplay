@@ -157,6 +157,7 @@ typedef struct Frame {
     double pts;           /* presentation timestamp for the frame */
     double duration;      /* estimated duration of the frame */
     int64_t pos;          /* byte position of the frame in the input file */
+    int64_t cnt;
     SDL_Overlay *bmp;
     int allocated;
     int reallocate;
@@ -223,15 +224,9 @@ typedef struct VideoState {
     FrameQueue pictq;
     FrameQueue subpq;
     FrameQueue sampq;
-    FrameQueue pictq2;
-    FrameQueue subpq2;
-    FrameQueue sampq2;
     Decoder auddec;
     Decoder viddec;
     Decoder subdec;
-    Decoder auddec2;
-    Decoder viddec2;
-    Decoder subdec2;
 
     int viddec_width;
     int viddec_height;
@@ -247,9 +242,7 @@ typedef struct VideoState {
     double audio_diff_threshold;
     int audio_diff_avg_count;
     AVStream *audio_st;
-    AVStream *audio_st2;
     PacketQueue audioq;
-    PacketQueue audioq2;
     int audio_hw_buf_size;
     uint8_t *audio_buf;
     uint8_t *audio_buf1;
@@ -282,18 +275,14 @@ typedef struct VideoState {
 
     int subtitle_stream;
     AVStream *subtitle_st;
-    AVStream *subtitle_st2;
     PacketQueue subtitleq;
-    PacketQueue subtitleq2;
 
     double frame_timer;
     double frame_last_returned_time;
     double frame_last_filter_delay;
     int video_stream;
     AVStream *video_st;
-    AVStream *video_st2;
     PacketQueue videoq;
-    PacketQueue videoq2;
     double max_frame_duration;      // maximum duration of a frame - above this, we consider the jump a timestamp discontinuity
 #if !CONFIG_AVFILTER
     struct SwsContext *img_convert_ctx;
@@ -303,9 +292,12 @@ typedef struct VideoState {
     int eof;
 
     char *filename;
-    char *filename2;
     int width, height, xleft, ytop;
     int step;
+    
+    double first_pts;
+    int vert_split_pos;
+    int mov_speed;
 
 #if CONFIG_AVFILTER
     int vfilter_idx;
@@ -948,14 +940,17 @@ static void calculate_display_rect(SDL_Rect *rect,
     rect->h = FFMAX(height, 1);
 }
 
-static void video_image_display(VideoState *is)
+static void video_image_display(VideoState *is, VideoState *aux_is)
 {
-    Frame *vp;
+    Frame *vp, *aux_vp = NULL;
     Frame *sp;
     SDL_Rect rect;
     int i;
 
     vp = frame_queue_peek_last(&is->pictq);
+    if(aux_is)
+        aux_vp = frame_queue_peek_last(&aux_is->pictq);
+        
     if (vp->bmp) {
         if (is->subtitle_st) {
             if (frame_queue_nb_remaining(&is->subpq) > 0) {
@@ -981,6 +976,53 @@ static void video_image_display(VideoState *is)
 
                     SDL_UnlockYUVOverlay (vp->bmp);
                 }
+            }
+        }
+        if(aux_is)  // need to blend two frame 
+        {
+            if(aux_vp->bmp)
+            {
+                uint8_t *data[4], *aux_data[4];
+                int linesize[4], aux_linesize[4];
+
+                SDL_LockYUVOverlay (vp->bmp);
+                SDL_LockYUVOverlay (aux_vp->bmp);
+
+                data[0] = vp->bmp->pixels[0];
+                data[1] = vp->bmp->pixels[2];
+                data[2] = vp->bmp->pixels[1];
+
+                linesize[0] = vp->bmp->pitches[0];
+                linesize[1] = vp->bmp->pitches[2];
+                linesize[2] = vp->bmp->pitches[1];
+
+                aux_data[0] = aux_vp->bmp->pixels[0];
+                aux_data[1] = aux_vp->bmp->pixels[2];
+                aux_data[2] = aux_vp->bmp->pixels[1];
+
+                aux_linesize[0] = aux_vp->bmp->pitches[0];
+                aux_linesize[1] = aux_vp->bmp->pitches[2];
+                aux_linesize[2] = aux_vp->bmp->pitches[1];
+                
+                for (i = 0; i < vp->height; i++)
+                {
+                    memcpy(data[0] + i * linesize[0] + is->vert_split_pos, aux_data[0] + i * aux_linesize[0] + is->vert_split_pos, vp->width - is->vert_split_pos);
+                    *(uint16_t *)(data[0] + i * linesize[0] + is->vert_split_pos) = 0;
+                }
+                for (i = 0; i < vp->height / 2; i++)
+                {
+                    memcpy(data[1] + i * linesize[1] + is->vert_split_pos / 2, aux_data[1] + i * aux_linesize[1] + is->vert_split_pos / 2, (vp->width - is->vert_split_pos) / 2);
+                    memcpy(data[2] + i * linesize[2] + is->vert_split_pos / 2, aux_data[2] + i * aux_linesize[2] + is->vert_split_pos / 2, (vp->width - is->vert_split_pos) / 2);
+                    *(data[1] + i * linesize[1] + is->vert_split_pos / 2) = 255;
+                    *(data[2] + i * linesize[2] + is->vert_split_pos / 2) = 255;
+                }
+                SDL_UnlockYUVOverlay (vp->bmp);
+                SDL_UnlockYUVOverlay (aux_vp->bmp);
+
+                if(is->vert_split_pos + is->mov_speed > vp->width || is->vert_split_pos + is->mov_speed < 0)
+                	  is->mov_speed = -is->mov_speed;
+                is->vert_split_pos += is->mov_speed;
+                	   
             }
         }
 
@@ -1307,14 +1349,14 @@ static int video_open(VideoState *is, int force_set_video_mode, Frame *vp)
 }
 
 /* display the current picture, if any */
-static void video_display(VideoState *is)
+static void video_display(VideoState *is, VideoState *aux_is)
 {
     if (!screen)
         video_open(is, 0, NULL);
     if (is->audio_st && is->show_mode != SHOW_MODE_VIDEO)
         video_audio_display(is);
     else if (is->video_st)
-        video_image_display(is);
+        video_image_display(is, aux_is);
 }
 
 static double get_clock(Clock *c)
@@ -1515,9 +1557,10 @@ static void update_video_pts(VideoState *is, double pts, int64_t pos, int serial
 }
 
 /* called to display each frame */
-static void video_refresh(void *opaque, double *remaining_time)
+static void video_refresh(void *opaque, void *aux_opaque, double *remaining_time)
 {
     VideoState *is = opaque;
+    VideoState *aux_is = aux_opaque;
     double time;
 
     Frame *sp, *sp2;
@@ -1528,23 +1571,29 @@ static void video_refresh(void *opaque, double *remaining_time)
     if (!display_disable && is->show_mode != SHOW_MODE_VIDEO && is->audio_st) {
         time = av_gettime_relative() / 1000000.0;
         if (is->force_refresh || is->last_vis_time + rdftspeed < time) {
-            video_display(is);
+            video_display(is, aux_is);
             is->last_vis_time = time;
         }
         *remaining_time = FFMIN(*remaining_time, is->last_vis_time + rdftspeed - time);
     }
 
-    if (is->video_st) {
+    if (is->video_st && (!aux_is || aux_is->video_st)) {
 retry:
-        if (frame_queue_nb_remaining(&is->pictq) == 0) {
+        if (frame_queue_nb_remaining(&is->pictq) == 0 || (aux_is && frame_queue_nb_remaining(&aux_is->pictq) == 0)) {
             // nothing to do, no picture to display in the queue
         } else {
             double last_duration, duration, delay;
             Frame *vp, *lastvp;
+            Frame *auxvp = NULL, *auxlastvp = NULL;
 
             /* dequeue the picture */
             lastvp = frame_queue_peek_last(&is->pictq);
             vp = frame_queue_peek(&is->pictq);
+            if(aux_is)
+            {
+                auxlastvp = frame_queue_peek_last(&aux_is->pictq);
+                auxvp = frame_queue_peek(&aux_is->pictq);
+            }
 
             if (vp->serial != is->videoq.serial) {
                 frame_queue_next(&is->pictq);
@@ -1562,25 +1611,28 @@ retry:
             delay = compute_target_delay(last_duration, is);
 
             time= av_gettime_relative()/1000000.0;
-            if (time < is->frame_timer + delay) {
+            if (time < is->frame_timer + delay) { // means current frame arrived too early, need to wait, return remaining_time to wait
+                //printf("frame arrived too early: time %f, is->frame_timer + delay %f, diff %f\n", time , is->frame_timer + delay, is->frame_timer + delay - time);
                 *remaining_time = FFMIN(is->frame_timer + delay - time, *remaining_time);
                 goto display;
             }
 
-            is->frame_timer += delay;
-            if (delay > 0 && time - is->frame_timer > AV_SYNC_THRESHOLD_MAX)
-                is->frame_timer = time;
+            is->frame_timer += delay; // is->frame_timer record display time of last frame
+            if (delay > 0 && time - is->frame_timer > AV_SYNC_THRESHOLD_MAX) // current frame arrived too late
+                is->frame_timer = time;  // current frame is displayed lately
 
             SDL_LockMutex(is->pictq.mutex);
             if (!isnan(vp->pts))
                 update_video_pts(is, vp->pts, vp->pos, vp->serial);
             SDL_UnlockMutex(is->pictq.mutex);
+            
+            //printf("remaining_time %f, last_duration %f, delay %f , time %f , is->frame_timer %f, vp->pts %f, vp->pos %lld\n", *remaining_time, last_duration, delay, time , is->frame_timer, vp->pts, vp->pos);
 
             if (frame_queue_nb_remaining(&is->pictq) > 1) {
                 Frame *nextvp = frame_queue_peek_next(&is->pictq);
                 duration = vp_duration(is, vp, nextvp);
                 if(!is->step && (framedrop>0 || (framedrop && get_master_sync_type(is) != AV_SYNC_VIDEO_MASTER)) && time > is->frame_timer + duration){
-                    is->frame_drops_late++;
+                    is->frame_drops_late++;  // current frame is late, drop it
                     frame_queue_next(&is->pictq);
                     goto retry;
                 }
@@ -1608,6 +1660,25 @@ retry:
 
             frame_queue_next(&is->pictq);
             is->force_refresh = 1;
+            if(aux_is) 
+            {
+                //printf("auxvp->pts %f first_pts %f, vp->pts %f, first_pts %f\n", auxvp->pts, aux_is->first_pts, vp->pts, is->first_pts);
+                double auxvp_rela_pts = auxvp->pts - aux_is->first_pts;
+                double rela_pts = vp->pts - is->first_pts;
+                while(auxvp_rela_pts < rela_pts - 0.03) // aux stream is slower than main stream
+                {
+                    if (frame_queue_nb_remaining(&aux_is->pictq) > 1)
+                        frame_queue_next(&aux_is->pictq);
+                    auxvp = frame_queue_peek(&aux_is->pictq);
+                    auxvp_rela_pts = auxvp->pts - aux_is->first_pts;
+                    av_usleep((int64_t)(0.001 * 1000000.0)); // sleep 1ms
+                }
+                if(auxvp_rela_pts < rela_pts + 0.03) // aux stream is sychronized with main stream
+                {
+                    frame_queue_next(&aux_is->pictq);
+                    aux_is->force_refresh = 1;
+                }
+            }
 
             if (is->step && !is->paused)
                 stream_toggle_pause(is);
@@ -1615,7 +1686,7 @@ retry:
 display:
         /* display picture */
         if (!display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown)
-            video_display(is);
+            video_display(is, aux_is);
     }
     is->force_refresh = 0;
     if (show_status) {
@@ -2261,6 +2332,8 @@ static int video_thread(void *arg)
             duration = (frame_rate.num && frame_rate.den ? av_q2d((AVRational){frame_rate.den, frame_rate.num}) : 0);
             pts = (frame->pts == AV_NOPTS_VALUE) ? NAN : frame->pts * av_q2d(tb);
             ret = queue_picture(is, frame, pts, duration, av_frame_get_pkt_pos(frame), is->viddec.pkt_serial);
+            if(is->first_pts < 0 && frame->pts != AV_NOPTS_VALUE)
+                is->first_pts = pts;
             av_frame_unref(frame);
 #if CONFIG_AVFILTER
         }
@@ -2779,6 +2852,8 @@ static int stream_component_open(VideoState *is, int stream_index)
 
         is->viddec_width  = avctx->width;
         is->viddec_height = avctx->height;
+        is->vert_split_pos = avctx->width / 2;
+        is->mov_speed = avctx->width / 200;
 
         decoder_init(&is->viddec, avctx, &is->videoq, is->continue_read_thread);
         if ((ret = decoder_start(&is->viddec, video_thread, is)) < 0)
@@ -3158,19 +3233,20 @@ static int read_thread(void *arg)
     return 0;
 }
 
-static VideoState *stream_open(const char **filename, AVInputFormat *iformat)
+static VideoState *stream_open(const char *filename, AVInputFormat *iformat)
 {
     VideoState *is;
 
     is = av_mallocz(sizeof(VideoState));
     if (!is)
         return NULL;
-    is->filename = av_strdup(filename[0]);
+    is->filename = av_strdup(filename);
     if (!is->filename)
         goto fail;
     is->iformat = iformat;
     is->ytop    = 0;
     is->xleft   = 0;
+    is->first_pts = -1;
 
     /* start video display */
     if (frame_queue_init(&is->pictq, &is->videoq, VIDEO_PICTURE_QUEUE_SIZE, 1) < 0)
@@ -3184,26 +3260,6 @@ static VideoState *stream_open(const char **filename, AVInputFormat *iformat)
         packet_queue_init(&is->audioq) < 0 ||
         packet_queue_init(&is->subtitleq) < 0)
         goto fail;
-    
-    if(filename[1])  // if input two file, then init the second decoder
-    {
-        is->filename2 = av_strdup(filename[1]);
-        if (!is->filename2)
-            goto fail;
-        
-        /* start video display */
-        if (frame_queue_init(&is->pictq2, &is->videoq2, VIDEO_PICTURE_QUEUE_SIZE, 1) < 0)
-            goto fail;
-        if (frame_queue_init(&is->subpq2, &is->subtitleq2, SUBPICTURE_QUEUE_SIZE, 0) < 0)
-            goto fail;
-        if (frame_queue_init(&is->sampq2, &is->audioq2, SAMPLE_QUEUE_SIZE, 1) < 0)
-            goto fail;
-        
-        if (packet_queue_init(&is->videoq2) < 0 ||
-            packet_queue_init(&is->audioq2) < 0 ||
-            packet_queue_init(&is->subtitleq2) < 0)
-            goto fail;
-    }
 
     if (!(is->continue_read_thread = SDL_CreateCond())) {
         av_log(NULL, AV_LOG_FATAL, "SDL_CreateCond(): %s\n", SDL_GetError());
@@ -3334,10 +3390,11 @@ static void toggle_audio_display(VideoState *is)
     }
 }
 
-static void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
+static void refresh_loop_wait_event(VideoState *is, VideoState *aux_is, SDL_Event *event) {
     double remaining_time = 0.0;
     SDL_PumpEvents(); // Pumps the event loop, gathering events from the input devices.
     while (!SDL_PeepEvents(event, 1, SDL_GETEVENT, SDL_ALLEVENTS)) { // Checks the event queue for messages and optionally returns them, SDL_GETEVENT means up to numevents events at the front of the event queue, matchingmask, will be returned and will be removed from the queue.
+        // 如果事件队列中一直没有事件，则一直在此loop中，持续更新显示帧
         if (!cursor_hidden && av_gettime_relative() - cursor_last_shown > CURSOR_HIDE_DELAY) {
             SDL_ShowCursor(0);  // hide cursor after 1 seconds
             cursor_hidden = 1;
@@ -3346,7 +3403,7 @@ static void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
             av_usleep((int64_t)(remaining_time * 1000000.0));
         remaining_time = REFRESH_RATE;
         if (is->show_mode != SHOW_MODE_NONE && (!is->paused || is->force_refresh))
-            video_refresh(is, &remaining_time);
+            video_refresh(is, aux_is, &remaining_time); // return remaining_time for synchronization
         SDL_PumpEvents();
     }
 }
@@ -3379,24 +3436,28 @@ static void seek_chapter(VideoState *is, int incr)
 }
 
 /* handle an event sent by the GUI */
-static void event_loop(VideoState *cur_stream)
+static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
 {
     SDL_Event event;
     double incr, pos, frac;
 
     for (;;) {
         double x;
-        refresh_loop_wait_event(cur_stream, &event);
+        refresh_loop_wait_event(cur_stream, auxlilary_stream, &event);
         switch (event.type) {
         case SDL_KEYDOWN:
             if (exit_on_keydown) {
                 do_exit(cur_stream);
+                if(auxlilary_stream) // free auxlilary stream
+                    do_exit(cur_stream);
                 break;
             }
             switch (event.key.keysym.sym) {
             case SDLK_ESCAPE:
             case SDLK_q:
                 do_exit(cur_stream);
+                if(auxlilary_stream) // free auxlilary stream
+                    do_exit(cur_stream);
                 break;
             case SDLK_f:
                 toggle_full_screen(cur_stream);
@@ -3405,6 +3466,7 @@ static void event_loop(VideoState *cur_stream)
             case SDLK_p:
             case SDLK_SPACE:
                 toggle_pause(cur_stream);
+                toggle_pause(auxlilary_stream);
                 break;
             case SDLK_m:
                 toggle_mute(cur_stream);
@@ -3419,6 +3481,7 @@ static void event_loop(VideoState *cur_stream)
                 break;
             case SDLK_s: // S: Step to next frame
                 step_to_next_frame(cur_stream);
+                step_to_next_frame(auxlilary_stream);
                 break;
             case SDLK_a:
                 stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
@@ -3805,7 +3868,7 @@ static int lockmgr(void **mtx, enum AVLockOp op)
 int main(int argc, char **argv)
 {
     int flags;
-    VideoState *is;
+    VideoState *is, *is2 = NULL;
     char dummy_videodriver[] = "SDL_VIDEODRIVER=dummy";
     char alsa_bufsize[] = "SDL_AUDIO_ALSA_SET_BUFFER_SIZE=1";
 
@@ -3883,13 +3946,15 @@ int main(int argc, char **argv)
     av_init_packet(&flush_pkt);
     flush_pkt.data = (uint8_t *)&flush_pkt;
 
-    is = stream_open(input_filename, file_iformat);
+    is = stream_open(input_filename[0], file_iformat);
+    if(input_filename[1])
+        is2 = stream_open(input_filename[1], file_iformat);
     if (!is) {
         av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState!\n");
         do_exit(NULL);
     }
 
-    event_loop(is);
+    event_loop(is, is2);
 
     /* never returns */
 

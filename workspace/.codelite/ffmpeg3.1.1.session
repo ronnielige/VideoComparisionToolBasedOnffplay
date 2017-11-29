@@ -26,15 +26,15 @@
     </TabInfo>
     <TabInfo>
       <wxString Value="D:\Projects\ffmpeg-3.1.1\ffplay.c" Name="FileName"/>
-      <int Value="312" Name="FirstVisibleLine"/>
-      <int Value="313" Name="CurrentLine"/>
+      <int Value="3828" Name="FirstVisibleLine"/>
+      <int Value="3851" Name="CurrentLine"/>
       <wxArrayString Name="Bookmarks"/>
       <IntVector Name="CollapsedFolds"/>
     </TabInfo>
     <TabInfo>
       <wxString Value="D:\Projects\ffmpeg-3.1.1\libavformat\utils.c" Name="FileName"/>
-      <int Value="2093" Name="FirstVisibleLine"/>
-      <int Value="2119" Name="CurrentLine"/>
+      <int Value="133" Name="FirstVisibleLine"/>
+      <int Value="134" Name="CurrentLine"/>
       <wxArrayString Name="Bookmarks"/>
       <IntVector Name="CollapsedFolds"/>
     </TabInfo>
@@ -75,14 +75,14 @@
     </TabInfo>
     <TabInfo>
       <wxString Value="D:\Projects\ffmpeg-3.1.1\cmdutils.c" Name="FileName"/>
-      <int Value="370" Name="FirstVisibleLine"/>
-      <int Value="390" Name="CurrentLine"/>
+      <int Value="1104" Name="FirstVisibleLine"/>
+      <int Value="1132" Name="CurrentLine"/>
       <wxArrayString Name="Bookmarks"/>
       <IntVector Name="CollapsedFolds"/>
     </TabInfo>
     <TabInfo>
       <wxString Value="D:\Projects\ffmpeg-3.1.1\cmdutils_common_opts.h" Name="FileName"/>
-      <int Value="7" Name="FirstVisibleLine"/>
+      <int Value="0" Name="FirstVisibleLine"/>
       <int Value="25" Name="CurrentLine"/>
       <wxArrayString Name="Bookmarks"/>
       <IntVector Name="CollapsedFolds"/>
@@ -91,6 +91,20 @@
       <wxString Value="D:\Projects\ffmpeg-3.1.1\cmdutils.h" Name="FileName"/>
       <int Value="160" Name="FirstVisibleLine"/>
       <int Value="161" Name="CurrentLine"/>
+      <wxArrayString Name="Bookmarks"/>
+      <IntVector Name="CollapsedFolds"/>
+    </TabInfo>
+    <TabInfo>
+      <wxString Value="D:\Projects\ffmpeg-3.1.1\libavcodec\utils.c" Name="FileName"/>
+      <int Value="3739" Name="FirstVisibleLine"/>
+      <int Value="3740" Name="CurrentLine"/>
+      <wxArrayString Name="Bookmarks"/>
+      <IntVector Name="CollapsedFolds"/>
+    </TabInfo>
+    <TabInfo>
+      <wxString Value="D:\Projects\ffmpeg-3.1.1\libavcodec\avcodec.h" Name="FileName"/>
+      <int Value="6011" Name="FirstVisibleLine"/>
+      <int Value="6035" Name="CurrentLine"/>
       <wxArrayString Name="Bookmarks"/>
       <IntVector Name="CollapsedFolds"/>
     </TabInfo>
@@ -115,7 +129,7 @@
     </SerializedObject>
     <SerializedObject Name="Breakpoint1">
       <wxString Value="D:\Projects\ffmpeg-3.1.1\ffplay.c" Name="file"/>
-      <int Value="3799" Name="lineno"/>
+      <int Value="3658" Name="lineno"/>
       <wxString Value="" Name="function_name"/>
       <wxString Value="" Name="memory_address"/>
       <int Value="1" Name="bp_type"/>
