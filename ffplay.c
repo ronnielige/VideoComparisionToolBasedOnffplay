@@ -1722,7 +1722,7 @@ retry:
                     auxvp = frame_queue_peek(&aux_is->pictq);
                     auxvp_rela_pts = auxvp->pts - aux_is->first_pts + aux_is->delay_frame_num * aux_duration;
                     av_usleep((int64_t)(0.001 * 1000000.0)); // sleep 1ms
-                    av_log(NULL, AV_LOG_INFO, "aux stream is slower than main stream, diff = %f\n", auxvp_rela_pts - vp_rela_pts);
+                    //av_log(NULL, AV_LOG_INFO, "aux stream is slower than main stream, diff = %f\n", auxvp_rela_pts - vp_rela_pts);
                 }
                 //av_log(NULL, AV_LOG_FATAL, "auxvp->pts %f auxvp_rela_pts %f  |  vp->pts %f, vp_rela_pts %f\n", auxvp->pts, auxvp_rela_pts, vp->pts, vp_rela_pts);
                 if(auxvp_rela_pts < vp_rela_pts + aux_duration) // aux stream is sychronized with main stream
@@ -1730,6 +1730,8 @@ retry:
                     frame_queue_next(&aux_is->pictq);
                     aux_is->force_refresh = 1;
                 }
+                if(auxvp_rela_pts > vp_rela_pts + 2) // if seek back, auxvp_pts would be greater than vp_pts, mush empty frame queue of aux_is
+                    frame_queue_next(&aux_is->pictq);
             }
 
             if (is->step && !is->paused)
@@ -3185,7 +3187,7 @@ static int read_thread(void *arg)
             SDL_Delay(10);
             continue;
         }
-#endif
+#endif 
         if (is->seek_req) {
             int64_t seek_target = is->seek_pos;
             int64_t seek_min    = is->seek_rel > 0 ? seek_target - is->seek_rel + 2: INT64_MIN;
@@ -3194,6 +3196,7 @@ static int read_thread(void *arg)
 //      of the seek_pos/seek_rel variables
 
             ret = avformat_seek_file(is->ic, -1, seek_min, seek_target, seek_max, is->seek_flags);
+            //av_log(NULL, AV_LOG_FATAL, "%s seek to %lld\n", is->ic->filename , seek_target);
             if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR,
                        "%s: error while seeking\n", is->ic->filename);
@@ -3648,9 +3651,10 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
             case SDLK_DOWN:
                 incr = -60.0;
             do_seek:
-                printf("seek not supported yet\n");
-                break;
+                printf("seek may not supported well yet\n");
+                //break;
                     if (seek_by_bytes) {
+                        int bkincr = incr;
                         pos = -1;
                         if (pos < 0 && cur_stream->video_stream >= 0)
                             pos = frame_queue_last_pos(&cur_stream->pictq);
@@ -3664,6 +3668,25 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                             incr *= 180000.0;
                         pos += incr;
                         stream_seek(cur_stream, pos, incr, 1);
+                        
+                        if(auxlilary_stream)
+                        {
+                            incr = bkincr;
+                            pos = -1;
+                            if (pos < 0 && auxlilary_stream->video_stream >= 0)
+                                pos = frame_queue_last_pos(&auxlilary_stream->pictq);
+                            if (pos < 0 && auxlilary_stream->audio_stream >= 0)
+                                pos = frame_queue_last_pos(&auxlilary_stream->sampq);
+                            if (pos < 0)
+                                pos = avio_tell(auxlilary_stream->ic->pb);
+                            if (auxlilary_stream->ic->bit_rate)
+                                incr *= auxlilary_stream->ic->bit_rate / 8.0;
+                            else
+                                incr *= 180000.0;
+                            pos += incr;
+                            stream_seek(auxlilary_stream, pos, incr, 1);
+                        }
+
                     } else {
                         pos = get_master_clock(cur_stream);
                         if (isnan(pos))
@@ -3672,6 +3695,8 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                         if (cur_stream->ic->start_time != AV_NOPTS_VALUE && pos < cur_stream->ic->start_time / (double)AV_TIME_BASE)
                             pos = cur_stream->ic->start_time / (double)AV_TIME_BASE;
                         stream_seek(cur_stream, (int64_t)(pos * AV_TIME_BASE), (int64_t)(incr * AV_TIME_BASE), 0);
+                        if(auxlilary_stream)
+                            stream_seek(auxlilary_stream, (int64_t)(pos * AV_TIME_BASE), (int64_t)(incr * AV_TIME_BASE), 0);
                     }
                 break;
             default:
@@ -3731,6 +3756,11 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                 if (seek_by_bytes || cur_stream->ic->duration <= 0) {
                     uint64_t size =  avio_size(cur_stream->ic->pb);
                     stream_seek(cur_stream, size*x/cur_stream->width, 0, 1);
+                    if(auxlilary_stream)
+                    {
+                        size =  avio_size(auxlilary_stream->ic->pb);
+                        stream_seek(auxlilary_stream, size*x/auxlilary_stream->width, 0, 1);   
+                    }
                 } else {
                     int64_t ts;
                     int ns, hh, mm, ss;
@@ -3946,8 +3976,10 @@ static void show_usage(void)
 {
     av_log(NULL, AV_LOG_FATAL, "Video Comparision Tool Base on ffplay\n");
     av_log(NULL, AV_LOG_FATAL, "Usage: %s [options] input_file1, input_file2\n", program_name);
+    av_log(NULL, AV_LOG_FATAL, "Note :\n");
     av_log(NULL, AV_LOG_FATAL, "       There is a vertical split line in the middle of window, left side display input_file1, right side display input_file2\n");
-    av_log(NULL, AV_LOG_FATAL, "       Click left mouse to move split line, or keep left mouse down, the vertical split line moves following mouse position\n\n");
+    av_log(NULL, AV_LOG_FATAL, "       Click left mouse to move split line, or keep left mouse down, the vertical split line moves following mouse position\n");
+    av_log(NULL, AV_LOG_FATAL, "       To support seek, file format should be the same the two input files\n\n");
     av_log(NULL, AV_LOG_FATAL, "While playing:\n");
     av_log(NULL, AV_LOG_INFO,  "             q, ESC                quit\n");
     av_log(NULL, AV_LOG_INFO,  "             f                     toggle full screen\n");
@@ -3956,6 +3988,8 @@ static void show_usage(void)
     av_log(NULL, AV_LOG_FATAL, "             F1                    step forward one frame for the first  input file while paused, to synchronize two files\n");
     av_log(NULL, AV_LOG_FATAL, "             F2                    step forward one frame for the second input file while paused, to synchronize two files\n");
     av_log(NULL, AV_LOG_INFO,  "             right mouse click     seek to percentage in file corresponding to fraction of width\n");
+    av_log(NULL, AV_LOG_INFO,  "             left/right            seek backward/forward 10 seconds\n");
+    av_log(NULL, AV_LOG_INFO,  "             down/up               seek backward/forward 1 minute\n");
     av_log(NULL, AV_LOG_INFO,  "             left  mouse click     move the vertical split line to mouse position\n");
     av_log(NULL, AV_LOG_FATAL, "             left  mouse down      The vertical split line will move following mouse position\n");
     av_log(NULL, AV_LOG_INFO, "\n");
