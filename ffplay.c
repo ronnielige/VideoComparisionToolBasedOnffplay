@@ -297,7 +297,11 @@ typedef struct VideoState {
     
     double first_pts;
     int vert_split_pos;
+    int last_vert_split_pos;
     int mov_speed;
+
+    uint8_t *bk_data[4];
+    int      linesize[4];
 
 #if CONFIG_AVFILTER
     int vfilter_idx;
@@ -982,24 +986,33 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         {
             if(aux_vp->bmp)
             {
-                uint8_t *data[4], *aux_data[4];
-                int linesize[4], aux_linesize[4];
-
                 SDL_LockYUVOverlay (vp->bmp);
                 SDL_LockYUVOverlay (aux_vp->bmp);
 
+                uint8_t *data[4], *aux_data[4];
+                int linesize[4], aux_linesize[4];
+                if(is->paused && is->last_vert_split_pos < is->vert_split_pos) // paused and move from left to right
+                { // first restore original frame
+                    for(i = 0; i < vp->height; i++)
+                        memcpy(vp->bmp->pixels[0] + i * vp->bmp->pitches[0], is->bk_data[0] + i * vp->width, vp->width);
+                    for(i = 0; i < vp->height / 2; i++)
+                    {
+                        memcpy(vp->bmp->pixels[1] + i * vp->bmp->pitches[1], is->bk_data[1] + i * vp->width / 2, vp->width / 2);
+                        memcpy(vp->bmp->pixels[2] + i * vp->bmp->pitches[2], is->bk_data[2] + i * vp->width / 2, vp->width / 2);
+                    }
+                }
                 data[0] = vp->bmp->pixels[0];
                 data[1] = vp->bmp->pixels[2];
                 data[2] = vp->bmp->pixels[1];
-
+    
                 linesize[0] = vp->bmp->pitches[0];
                 linesize[1] = vp->bmp->pitches[2];
                 linesize[2] = vp->bmp->pitches[1];
-
+    
                 aux_data[0] = aux_vp->bmp->pixels[0];
                 aux_data[1] = aux_vp->bmp->pixels[2];
                 aux_data[2] = aux_vp->bmp->pixels[1];
-
+    
                 aux_linesize[0] = aux_vp->bmp->pitches[0];
                 aux_linesize[1] = aux_vp->bmp->pitches[2];
                 aux_linesize[2] = aux_vp->bmp->pitches[1];
@@ -1016,13 +1029,16 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
                     *(data[1] + i * linesize[1] + is->vert_split_pos / 2) = 255;
                     *(data[2] + i * linesize[2] + is->vert_split_pos / 2) = 255;
                 }
+
                 SDL_UnlockYUVOverlay (vp->bmp);
                 SDL_UnlockYUVOverlay (aux_vp->bmp);
 
-                if(is->vert_split_pos + is->mov_speed > vp->width || is->vert_split_pos + is->mov_speed < 0)
-                	  is->mov_speed = -is->mov_speed;
-                is->vert_split_pos += is->mov_speed;
-                	   
+                if(!is->paused)
+                {
+                    if(is->vert_split_pos + is->mov_speed > vp->width || is->vert_split_pos + is->mov_speed < 0)
+                	       is->mov_speed = -is->mov_speed;
+                    is->vert_split_pos += is->mov_speed;
+                }   
             }
         }
 
@@ -1216,6 +1232,9 @@ static void stream_component_close(VideoState *is, int stream_index)
     case AVMEDIA_TYPE_VIDEO:
         decoder_abort(&is->viddec, &is->pictq);
         decoder_destroy(&is->viddec);
+        av_free(is->bk_data[0]);
+        av_free(is->bk_data[1]);
+        av_free(is->bk_data[2]);
         break;
     case AVMEDIA_TYPE_SUBTITLE:
         decoder_abort(&is->subdec, &is->subpq);
@@ -1686,7 +1705,24 @@ retry:
 display:
         /* display picture */
         if (!display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown)
+        {
+            if(!is->paused) // need backup frame data
+            {
+                Frame *vp = vp = frame_queue_peek_last(&is->pictq);
+                if(vp->bmp)
+                {
+                    int i;
+                    for(i = 0; i < vp->height; i++)
+                        memcpy(is->bk_data[0] + i * vp->width, vp->bmp->pixels[0] + i * vp->bmp->pitches[0], vp->width);
+                    for(i = 0; i < vp->height / 2; i++)
+                    {
+                        memcpy(is->bk_data[1] + i * vp->width / 2, vp->bmp->pixels[1] + i * vp->bmp->pitches[1], vp->width / 2);
+                        memcpy(is->bk_data[2] + i * vp->width / 2, vp->bmp->pixels[2] + i * vp->bmp->pitches[2], vp->width / 2);
+                    }
+                }
+            }
             video_display(is, aux_is);
+        }
     }
     is->force_refresh = 0;
     if (show_status) {
@@ -2853,7 +2889,14 @@ static int stream_component_open(VideoState *is, int stream_index)
         is->viddec_width  = avctx->width;
         is->viddec_height = avctx->height;
         is->vert_split_pos = avctx->width / 2;
-        is->mov_speed = avctx->width / 200;
+        is->last_vert_split_pos = is->vert_split_pos;
+        is->mov_speed = 0;//avctx->width / 200;
+        is->bk_data[0] = av_malloc(avctx->width * avctx->height);
+        is->bk_data[1] = av_malloc(avctx->width * avctx->height / 4);
+        is->bk_data[2] = av_malloc(avctx->width * avctx->height / 4);
+        is->linesize[0] = avctx->width;
+        is->linesize[1] = avctx->width / 2;
+        is->linesize[2] = avctx->width / 2;
 
         decoder_init(&is->viddec, avctx, &is->videoq, is->continue_read_thread);
         if ((ret = decoder_start(&is->viddec, video_thread, is)) < 0)
@@ -3440,6 +3483,7 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
 {
     SDL_Event event;
     double incr, pos, frac;
+    int action = 0; // 0: seek, 1: reset vert split position
 
     for (;;) {
         double x;
@@ -3572,7 +3616,7 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                 do_exit(cur_stream);
                 break;
             }
-            if (event.button.button == SDL_BUTTON_LEFT) {
+            if (event.button.button == SDL_BUTTON_LEFT && 0) {
                 static int64_t last_mouse_left_click = 0;
                 if (av_gettime_relative() - last_mouse_left_click <= 500000) {
                     toggle_full_screen(cur_stream);
@@ -3590,13 +3634,20 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
             cursor_last_shown = av_gettime_relative();
             if (event.type == SDL_MOUSEBUTTONDOWN) {
                 if (event.button.button != SDL_BUTTON_RIGHT)
-                    break;
+                {
+                    action = 1;
+                    //break;
+                }
+                else
+                    action = 0;
                 x = event.button.x;
             } else {
                 if (!(event.motion.state & SDL_BUTTON_RMASK))
                     break;
                 x = event.motion.x;
             }
+            if(action == 0) // proceed seek action
+            {
                 if (seek_by_bytes || cur_stream->ic->duration <= 0) {
                     uint64_t size =  avio_size(cur_stream->ic->pb);
                     stream_seek(cur_stream, size*x/cur_stream->width, 0, 1);
@@ -3621,6 +3672,13 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                         ts += cur_stream->ic->start_time;
                     stream_seek(cur_stream, ts, 0, 0);
                 }
+            }
+            else if(action == 1) // reset vert split position
+            {
+                cur_stream->last_vert_split_pos = cur_stream->vert_split_pos;
+                cur_stream->vert_split_pos = x / cur_stream->width * cur_stream->viddec_width;
+                video_display(cur_stream, auxlilary_stream);
+            }
             break;
         case SDL_VIDEORESIZE:
                 screen = SDL_SetVideoMode(FFMIN(16383, event.resize.w), event.resize.h, 0,
