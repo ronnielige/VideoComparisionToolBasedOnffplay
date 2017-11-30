@@ -300,6 +300,7 @@ typedef struct VideoState {
     int last_vert_split_pos;
     int mov_speed;             // set the move speed of the vertical split line
     int left_mouse_bt_stat;    // stat of left mouse button: 0 - left mouse button up; 1 - left mouse button down
+    int delay_frame_num;       // delay frame from start
 
     uint8_t *bk_data[4];
     int      linesize[4];
@@ -987,12 +988,13 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         {
             if(aux_vp->bmp)
             {
-                SDL_LockYUVOverlay (vp->bmp);
-                SDL_LockYUVOverlay (aux_vp->bmp);
-
                 uint8_t *data[4], *aux_data[4];
                 int linesize[4], aux_linesize[4];
-                if(is->paused && is->last_vert_split_pos < is->vert_split_pos) // paused and move from left to right
+                
+                SDL_LockYUVOverlay (vp->bmp);
+                SDL_LockYUVOverlay (aux_vp->bmp);
+                
+                if(is->paused && is->last_vert_split_pos <= is->vert_split_pos) // paused and move from left to right
                 { // first restore original frame
                     for(i = 0; i < vp->height; i++)
                         memcpy(vp->bmp->pixels[0] + i * vp->bmp->pitches[0], is->bk_data[0] + i * vp->width, vp->width);
@@ -1332,6 +1334,7 @@ static int video_open(VideoState *is, int force_set_video_mode, Frame *vp)
 {
     int flags = SDL_HWSURFACE | SDL_ASYNCBLIT | SDL_HWACCEL;
     int w,h;
+    char new_title[400];
 
     if (is_full_screen) flags |= SDL_FULLSCREEN;
     else                flags |= SDL_RESIZABLE;
@@ -1360,6 +1363,11 @@ static int video_open(VideoState *is, int force_set_video_mode, Frame *vp)
     }
     if (!window_title)
         window_title = input_filename[0];
+    if(input_filename[1])
+    {
+        sprintf(new_title, "%s  <--------------->  %s", input_filename[0], input_filename[1]);
+        window_title = new_title;
+    }
     SDL_WM_SetCaption(window_title, window_title);
 
     is->width  = screen->w;
@@ -1603,6 +1611,7 @@ retry:
             // nothing to do, no picture to display in the queue
         } else {
             double last_duration, duration, delay;
+            double aux_duration = 0.0;
             Frame *vp, *lastvp;
             Frame *auxvp = NULL, *auxlastvp = NULL;
 
@@ -1629,6 +1638,10 @@ retry:
             /* compute nominal last_duration */
             last_duration = vp_duration(is, lastvp, vp);
             delay = compute_target_delay(last_duration, is);
+            if(aux_is)
+            {
+                aux_duration = vp_duration(aux_is, auxlastvp, auxvp);
+            }
 
             time= av_gettime_relative()/1000000.0;
             if (time < is->frame_timer + delay) { // means current frame arrived too early, need to wait, return remaining_time to wait
@@ -1682,18 +1695,18 @@ retry:
             is->force_refresh = 1;
             if(aux_is) 
             {
-                //printf("auxvp->pts %f first_pts %f, vp->pts %f, first_pts %f\n", auxvp->pts, aux_is->first_pts, vp->pts, is->first_pts);
-                double auxvp_rela_pts = auxvp->pts - aux_is->first_pts;
-                double rela_pts = vp->pts - is->first_pts;
-                while(auxvp_rela_pts < rela_pts - 0.03) // aux stream is slower than main stream
+                double auxvp_rela_pts = auxvp->pts - aux_is->first_pts + aux_is->delay_frame_num * aux_duration;
+                double vp_rela_pts = vp->pts - is->first_pts + is->delay_frame_num * last_duration; 
+                while(auxvp_rela_pts < vp_rela_pts - aux_duration) // aux stream is slower than main stream
                 {
                     if (frame_queue_nb_remaining(&aux_is->pictq) > 1)
                         frame_queue_next(&aux_is->pictq);
                     auxvp = frame_queue_peek(&aux_is->pictq);
-                    auxvp_rela_pts = auxvp->pts - aux_is->first_pts;
+                    auxvp_rela_pts = auxvp->pts - aux_is->first_pts + aux_is->delay_frame_num * aux_duration;
                     av_usleep((int64_t)(0.001 * 1000000.0)); // sleep 1ms
                 }
-                if(auxvp_rela_pts < rela_pts + 0.03) // aux stream is sychronized with main stream
+                av_log(NULL, AV_LOG_FATAL, "auxvp->pts %f auxvp_rela_pts %f  |  vp->pts %f, vp_rela_pts %f\n", auxvp->pts, auxvp_rela_pts, vp->pts, vp_rela_pts);
+                if(auxvp_rela_pts < vp_rela_pts + aux_duration) // aux stream is sychronized with main stream
                 {
                     frame_queue_next(&aux_is->pictq);
                     aux_is->force_refresh = 1;
@@ -1702,12 +1715,14 @@ retry:
 
             if (is->step && !is->paused)
                 stream_toggle_pause(is);
+            if (aux_is && aux_is->step && !aux_is->paused)
+                stream_toggle_pause(aux_is);
         }
 display:
         /* display picture */
         if (!display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown)
         {
-            if(!is->paused) // need backup frame data
+            if(!is->paused || is->step) // TODO: need backup frame data, need to research SDL overlay Mode to emit this operation
             {
                 Frame *vp = vp = frame_queue_peek_last(&is->pictq);
                 if(vp->bmp)
@@ -3486,6 +3501,9 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
     double incr, pos, frac;
     int mouse_action = 0; // 0 - seek, 1 - reset vert split position; other value - do nothing
     cur_stream->left_mouse_bt_stat = 0; // button up
+    cur_stream->delay_frame_num = 0;
+    if(auxlilary_stream)
+        auxlilary_stream->delay_frame_num = 0;
     
     for (;;) {
         double x;
@@ -3529,6 +3547,19 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                 step_to_next_frame(cur_stream);
                 step_to_next_frame(auxlilary_stream);
                 break;
+            case SDLK_F1:
+                cur_stream->delay_frame_num++;
+                if (auxlilary_stream && frame_queue_nb_remaining(&auxlilary_stream->pictq) > 1)
+                    frame_queue_next(&auxlilary_stream->pictq);
+                video_display(cur_stream, auxlilary_stream);
+                break;   
+            case SDLK_F2:
+                if(auxlilary_stream)
+                    auxlilary_stream->delay_frame_num++;
+                if (frame_queue_nb_remaining(&cur_stream->pictq) > 1)
+                    frame_queue_next(&cur_stream->pictq);
+                video_display(cur_stream, auxlilary_stream);
+                break; 
             case SDLK_a:
                 stream_cycle_channel(cur_stream, AVMEDIA_TYPE_AUDIO);
                 break;
@@ -3790,7 +3821,7 @@ static int opt_show_mode(void *optctx, const char *opt, const char *arg)
 
 static void opt_input_file(void *optctx, const char *filename)
 {
-    char** i_fname = input_filename[0] == NULL? input_filename: input_filename + 1;
+    char** i_fname = input_filename[0] == NULL? (char **)input_filename: (char **)input_filename + 1;
     if (*i_fname) {
         av_log(NULL, AV_LOG_FATAL,
                "Argument '%s' provided as input filename, but '%s' was already specified.\n",
@@ -3799,7 +3830,7 @@ static void opt_input_file(void *optctx, const char *filename)
     }
     if (!strcmp(filename, "-"))
         filename = "pipe:";
-    *i_fname = filename;
+    *i_fname = (char *)filename;
 }
 
 static int opt_codec(void *optctx, const char *opt, const char *arg)
