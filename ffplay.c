@@ -295,10 +295,11 @@ typedef struct VideoState {
     int width, height, xleft, ytop;
     int step;
     
-    double first_pts;
-    int vert_split_pos;
+    double first_pts;          // record first video pts of video stream
+    int vert_split_pos;        // record vertical split line position
     int last_vert_split_pos;
-    int mov_speed;
+    int mov_speed;             // set the move speed of the vertical split line
+    int left_mouse_bt_stat;    // stat of left mouse button: 0 - left mouse button up; 1 - left mouse button down
 
     uint8_t *bk_data[4];
     int      linesize[4];
@@ -2890,7 +2891,7 @@ static int stream_component_open(VideoState *is, int stream_index)
         is->viddec_height = avctx->height;
         is->vert_split_pos = avctx->width / 2;
         is->last_vert_split_pos = is->vert_split_pos;
-        is->mov_speed = 0;//avctx->width / 200;
+        is->mov_speed = 0; //avctx->width / 200;
         is->bk_data[0] = av_malloc(avctx->width * avctx->height);
         is->bk_data[1] = av_malloc(avctx->width * avctx->height / 4);
         is->bk_data[2] = av_malloc(avctx->width * avctx->height / 4);
@@ -3483,8 +3484,9 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
 {
     SDL_Event event;
     double incr, pos, frac;
-    int action = 0; // 0: seek, 1: reset vert split position
-
+    int mouse_action = 0; // 0 - seek, 1 - reset vert split position; other value - do nothing
+    cur_stream->left_mouse_bt_stat = 0; // button up
+    
     for (;;) {
         double x;
         refresh_loop_wait_event(cur_stream, auxlilary_stream, &event);
@@ -3580,6 +3582,8 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
             case SDLK_DOWN:
                 incr = -60.0;
             do_seek:
+                printf("seek not supported yet\n");
+                break;
                     if (seek_by_bytes) {
                         pos = -1;
                         if (pos < 0 && cur_stream->video_stream >= 0)
@@ -3611,20 +3615,27 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
         case SDL_VIDEOEXPOSE:
             cur_stream->force_refresh = 1;
             break;
+        case SDL_MOUSEBUTTONUP:
+            if (event.button.button == SDL_BUTTON_LEFT)
+            {
+                cur_stream->left_mouse_bt_stat = 0; // record left mouse button stat
+                break;
+            }
         case SDL_MOUSEBUTTONDOWN:
             if (exit_on_mousedown) {
                 do_exit(cur_stream);
                 break;
             }
-            if (event.button.button == SDL_BUTTON_LEFT && 0) {
-                static int64_t last_mouse_left_click = 0;
-                if (av_gettime_relative() - last_mouse_left_click <= 500000) {
-                    toggle_full_screen(cur_stream);
-                    cur_stream->force_refresh = 1;
-                    last_mouse_left_click = 0;
-                } else {
-                    last_mouse_left_click = av_gettime_relative();
-                }
+            if (event.button.button == SDL_BUTTON_LEFT) {
+                cur_stream->left_mouse_bt_stat = 1;
+                //static int64_t last_mouse_left_click = 0;
+                //if (av_gettime_relative() - last_mouse_left_click <= 500000) {
+                //    toggle_full_screen(cur_stream);
+                //    cur_stream->force_refresh = 1;
+                //    last_mouse_left_click = 0;
+                //} else {
+                //    last_mouse_left_click = av_gettime_relative();
+                //}
             }
         case SDL_MOUSEMOTION:
             if (cursor_hidden) {
@@ -3634,20 +3645,23 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
             cursor_last_shown = av_gettime_relative();
             if (event.type == SDL_MOUSEBUTTONDOWN) {
                 if (event.button.button != SDL_BUTTON_RIGHT)
-                {
-                    action = 1;
-                    //break;
-                }
+                    mouse_action = 1;
                 else
-                    action = 0;
+                    mouse_action = 0;
                 x = event.button.x;
             } else {
-                if (!(event.motion.state & SDL_BUTTON_RMASK))
-                    break;
+                //if (!(event.motion.state & SDL_BUTTON_RMASK))
+                //    break;
+                if(cur_stream->left_mouse_bt_stat == 1)
+                    mouse_action = 1;  // if left mouse button down and mouse move, then move the vertical split line
+                else
+                    mouse_action = -1;  // do nothing
                 x = event.motion.x;
             }
-            if(action == 0) // proceed seek action
+            if(mouse_action == 0) // proceed seek mouse_action
             {
+                printf("seek not supported yet\n");
+                break;
                 if (seek_by_bytes || cur_stream->ic->duration <= 0) {
                     uint64_t size =  avio_size(cur_stream->ic->pb);
                     stream_seek(cur_stream, size*x/cur_stream->width, 0, 1);
@@ -3673,7 +3687,7 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                     stream_seek(cur_stream, ts, 0, 0);
                 }
             }
-            else if(action == 1) // reset vert split position
+            else if(mouse_action == 1) // reset vert split position
             {
                 cur_stream->last_vert_split_pos = cur_stream->vert_split_pos;
                 cur_stream->vert_split_pos = x / cur_stream->width * cur_stream->viddec_width;
@@ -4006,7 +4020,24 @@ int main(int argc, char **argv)
 
     is = stream_open(input_filename[0], file_iformat);
     if(input_filename[1])
+    {
         is2 = stream_open(input_filename[1], file_iformat);
+        if(!is2)
+        {
+            av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState2 for file %s!\n", input_filename[1]);
+            do_exit(NULL);
+        }
+        
+        while(is->viddec_width == 0 || is2->viddec_width == 0) // wait until read_thread has got the resolution information
+            av_usleep((int64_t)(0.001 * 1000000.0)); // sleep 1ms
+            
+        if(is->viddec_width != is2->viddec_width || is->viddec_height != is2->viddec_height)
+        {
+            av_log(NULL, AV_LOG_FATAL, "Resolution is not the same between two input files, Can't compare them, Play the main file\n");
+            stream_close(is2);
+            is2 = NULL;
+        }
+    }
     if (!is) {
         av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState!\n");
         do_exit(NULL);
