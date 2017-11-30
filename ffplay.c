@@ -1012,7 +1012,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
                 SDL_LockYUVOverlay (vp->bmp);
                 SDL_LockYUVOverlay (aux_vp->bmp);
                 
-                if(is->paused && is->last_vert_split_pos <= is->vert_split_pos) // paused and move from left to right
+                if(is->paused && (is->last_vert_split_pos <= is->vert_split_pos || is->step)) // paused and move from left to right
                 { // first restore original frame
                     for(i = 0; i < vp->height; i++)
                         memcpy(vp->bmp->pixels[0] + i * vp->bmp->pitches[0], is->bk_data[0] + i * vp->width, vp->width);
@@ -1041,14 +1041,14 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
                 for (i = 0; i < vp->height; i++)
                 {
                     memcpy(data[0] + i * linesize[0] + is->vert_split_pos, aux_data[0] + i * aux_linesize[0] + is->vert_split_pos, vp->width - is->vert_split_pos);
-                    *(uint16_t *)(data[0] + i * linesize[0] + is->vert_split_pos) = 128;
+                    *(uint16_t *)(data[0] + i * linesize[0] + is->vert_split_pos) = 255;
                 }
                 for (i = 0; i < vp->height / 2; i++)
                 {
                     memcpy(data[1] + i * linesize[1] + is->vert_split_pos / 2, aux_data[1] + i * aux_linesize[1] + is->vert_split_pos / 2, (vp->width - is->vert_split_pos) / 2);
                     memcpy(data[2] + i * linesize[2] + is->vert_split_pos / 2, aux_data[2] + i * aux_linesize[2] + is->vert_split_pos / 2, (vp->width - is->vert_split_pos) / 2);
-                    *(data[1] + i * linesize[1] + is->vert_split_pos / 2) = 128;
-                    *(data[2] + i * linesize[2] + is->vert_split_pos / 2) = 128;
+                    *(data[1] + i * linesize[1] + is->vert_split_pos / 2) = 255;
+                    *(data[2] + i * linesize[2] + is->vert_split_pos / 2) = 255;
                 }
 
                 SDL_UnlockYUVOverlay (vp->bmp);
@@ -1743,7 +1743,7 @@ display:
         {
             if(!is->paused || is->step) // TODO: need backup frame data, need to research SDL overlay Mode to emit this operation
             {
-                Frame *vp = vp = frame_queue_peek_last(&is->pictq);
+                Frame *vp = frame_queue_peek_last(&is->pictq);
                 if(vp->bmp)
                 {
                     int i;
@@ -3038,11 +3038,11 @@ static int read_thread(void *arg)
     if (scan_all_pmts_set)
         av_dict_set(&format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE);
 
-    if ((t = av_dict_get(format_opts, "", NULL, AV_DICT_IGNORE_SUFFIX))) {
-        av_log(NULL, AV_LOG_ERROR, "Option %s not found.\n", t->key);
-        ret = AVERROR_OPTION_NOT_FOUND;
-        goto fail;
-    }
+    //if ((t = av_dict_get(format_opts, "", NULL, AV_DICT_IGNORE_SUFFIX))) {
+    //    av_log(NULL, AV_LOG_ERROR, "Option %s not found.\n", t->key);
+    //    ret = AVERROR_OPTION_NOT_FOUND;
+    //    goto fail;
+    //}
     is->ic = ic;
 
     if (genpts)
@@ -3519,6 +3519,7 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
     SDL_Event event;
     double incr, pos, frac;
     int mouse_action = 0; // 0 - seek, 1 - reset vert split position; other value - do nothing
+    Frame *vp;
     cur_stream->left_mouse_bt_stat = 0; // button up
     cur_stream->delay_frame_num = 0;
     if(auxlilary_stream)
@@ -3567,16 +3568,31 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                 step_to_next_frame(auxlilary_stream);
                 break;
             case SDLK_F1:
-                cur_stream->delay_frame_num++;
-                if (auxlilary_stream && frame_queue_nb_remaining(&auxlilary_stream->pictq) > 1)
-                    frame_queue_next(&auxlilary_stream->pictq);
+                if(auxlilary_stream)
+                    auxlilary_stream->delay_frame_num++;
+                cur_stream->step = 1;
+                if (frame_queue_nb_remaining(&cur_stream->pictq) > 1)
+                    frame_queue_next(&cur_stream->pictq);
+                
+                vp = frame_queue_peek_last(&cur_stream->pictq);
+                if(vp->bmp) // need to backup as main_stream has refreshed 
+                {
+                    int i;
+                    for(i = 0; i < vp->height; i++)
+                        memcpy(cur_stream->bk_data[0] + i * vp->width, vp->bmp->pixels[0] + i * vp->bmp->pitches[0], vp->width);
+                    for(i = 0; i < vp->height / 2; i++)
+                    {
+                        memcpy(cur_stream->bk_data[1] + i * vp->width / 2, vp->bmp->pixels[1] + i * vp->bmp->pitches[1], vp->width / 2);
+                        memcpy(cur_stream->bk_data[2] + i * vp->width / 2, vp->bmp->pixels[2] + i * vp->bmp->pitches[2], vp->width / 2);
+                    }
+                }
                 video_display(cur_stream, auxlilary_stream);
                 break;   
             case SDLK_F2:
-                if(auxlilary_stream)
-                    auxlilary_stream->delay_frame_num++;
-                if (frame_queue_nb_remaining(&cur_stream->pictq) > 1)
-                    frame_queue_next(&cur_stream->pictq);
+                cur_stream->step = 1;
+                cur_stream->delay_frame_num++;
+                if (auxlilary_stream && frame_queue_nb_remaining(&auxlilary_stream->pictq) > 1)
+                    frame_queue_next(&auxlilary_stream->pictq);
                 video_display(cur_stream, auxlilary_stream);
                 break; 
             case SDLK_a:
@@ -3734,8 +3750,10 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                     ts = frac * cur_stream->ic->duration;
                     if (cur_stream->ic->start_time != AV_NOPTS_VALUE)
                         ts += cur_stream->ic->start_time;
+                        
                     stream_seek(cur_stream, ts, 0, 0);
-                    stream_seek(auxlilary_stream, ts, 0, 0);
+                    if(auxlilary_stream)
+                        stream_seek(auxlilary_stream, ts, 0, 0);
                 }
             }
             else if(mouse_action == 1) // reset vert split position
@@ -3926,15 +3944,20 @@ static const OptionDef options[] = {
 
 static void show_usage(void)
 {
-    av_log(NULL, AV_LOG_FATAL, "Simple Video Comparision Tool Base on ffplay\n");
-    av_log(NULL, AV_LOG_FATAL, "usage: %s [options] input_file1, input_file2\n", program_name);
-    av_log(NULL, AV_LOG_INFO, "While playing:\n");
-    av_log(NULL, AV_LOG_INFO, "              q, ESC                quit\n");
-    av_log(NULL, AV_LOG_INFO, "              f                     toggle full screen\n");
-    av_log(NULL, AV_LOG_INFO, "              p, SPC                pause\n");
-    av_log(NULL, AV_LOG_INFO, "              s                     activate frame-step mode\n");
-    av_log(NULL, AV_LOG_INFO, "              right mouse click     seek to percentage in file corresponding to fraction of width\n");
-    av_log(NULL, AV_LOG_INFO, "              left  mouse click     move the vertical split line\n");
+    av_log(NULL, AV_LOG_FATAL, "Video Comparision Tool Base on ffplay\n");
+    av_log(NULL, AV_LOG_FATAL, "Usage: %s [options] input_file1, input_file2\n", program_name);
+    av_log(NULL, AV_LOG_FATAL, "       There is a vertical split line in the middle of window, left side display input_file1, right side display input_file2\n");
+    av_log(NULL, AV_LOG_FATAL, "       Click left mouse to move split line, or keep left mouse down, the vertical split line moves following mouse position\n\n");
+    av_log(NULL, AV_LOG_FATAL, "While playing:\n");
+    av_log(NULL, AV_LOG_INFO,  "             q, ESC                quit\n");
+    av_log(NULL, AV_LOG_INFO,  "             f                     toggle full screen\n");
+    av_log(NULL, AV_LOG_INFO,  "             p, SPC                pause\n");
+    av_log(NULL, AV_LOG_FATAL, "             s                     activate frame-step mode, step forward one frame for two input files\n");
+    av_log(NULL, AV_LOG_FATAL, "             F1                    step forward one frame for the first  input file while paused, to synchronize two files\n");
+    av_log(NULL, AV_LOG_FATAL, "             F2                    step forward one frame for the second input file while paused, to synchronize two files\n");
+    av_log(NULL, AV_LOG_INFO,  "             right mouse click     seek to percentage in file corresponding to fraction of width\n");
+    av_log(NULL, AV_LOG_INFO,  "             left  mouse click     move the vertical split line to mouse position\n");
+    av_log(NULL, AV_LOG_FATAL, "             left  mouse down      The vertical split line will move following mouse position\n");
     av_log(NULL, AV_LOG_INFO, "\n");
 }
 
@@ -4026,8 +4049,8 @@ int main(int argc, char **argv)
 
     if (!input_filename[0]) {
         show_usage();
-        av_log(NULL, AV_LOG_FATAL, "An input file must be specified\n");
-        av_log(NULL, AV_LOG_FATAL,
+        av_log(NULL, AV_LOG_INFO, "At least one input file must be specified\n");
+        av_log(NULL, AV_LOG_INFO,
                "Use -h to get full help or, even better, run 'man %s'\n", program_name);
         exit(1);
     }
