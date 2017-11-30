@@ -955,7 +955,25 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
 
     vp = frame_queue_peek_last(&is->pictq);
     if(aux_is)
+    {
+        char new_title[400];
+        int vns, vhh, vmm, vss, vms, ans, ahh, amm, ass, ams;
         aux_vp = frame_queue_peek_last(&aux_is->pictq);
+        // set window title to show played time for each file
+        vns  = (int)vp->pts;
+        vhh  = vns / 3600;
+        vmm  = (vns % 3600) / 60;
+        vss  = (vns % 60);
+        vms  = 1000 * (vp->pts - (vhh * 3600 + vmm * 60 + vss));
+        ans  = (int)aux_vp->pts;
+        ahh  = ans / 3600;
+        amm  = (ans % 3600) / 60;
+        ass  = (ans % 60);
+        ams  = 1000 * (aux_vp->pts - (ahh * 3600 + amm * 60 + ass));
+        if(input_filename[1])
+            sprintf(new_title, "%s  %2d:%02d:%02d.%03d <------->  %s  %2d:%02d:%02d.%03d", input_filename[0], vhh, vmm, vss, vms, input_filename[1], ahh, amm, ass, ams);
+        SDL_WM_SetCaption(new_title, new_title);
+    }
         
     if (vp->bmp) {
         if (is->subtitle_st) {
@@ -1023,14 +1041,14 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
                 for (i = 0; i < vp->height; i++)
                 {
                     memcpy(data[0] + i * linesize[0] + is->vert_split_pos, aux_data[0] + i * aux_linesize[0] + is->vert_split_pos, vp->width - is->vert_split_pos);
-                    *(uint16_t *)(data[0] + i * linesize[0] + is->vert_split_pos) = 0;
+                    *(uint16_t *)(data[0] + i * linesize[0] + is->vert_split_pos) = 128;
                 }
                 for (i = 0; i < vp->height / 2; i++)
                 {
                     memcpy(data[1] + i * linesize[1] + is->vert_split_pos / 2, aux_data[1] + i * aux_linesize[1] + is->vert_split_pos / 2, (vp->width - is->vert_split_pos) / 2);
                     memcpy(data[2] + i * linesize[2] + is->vert_split_pos / 2, aux_data[2] + i * aux_linesize[2] + is->vert_split_pos / 2, (vp->width - is->vert_split_pos) / 2);
-                    *(data[1] + i * linesize[1] + is->vert_split_pos / 2) = 255;
-                    *(data[2] + i * linesize[2] + is->vert_split_pos / 2) = 255;
+                    *(data[1] + i * linesize[1] + is->vert_split_pos / 2) = 128;
+                    *(data[2] + i * linesize[2] + is->vert_split_pos / 2) = 128;
                 }
 
                 SDL_UnlockYUVOverlay (vp->bmp);
@@ -1704,8 +1722,9 @@ retry:
                     auxvp = frame_queue_peek(&aux_is->pictq);
                     auxvp_rela_pts = auxvp->pts - aux_is->first_pts + aux_is->delay_frame_num * aux_duration;
                     av_usleep((int64_t)(0.001 * 1000000.0)); // sleep 1ms
+                    av_log(NULL, AV_LOG_INFO, "aux stream is slower than main stream, diff = %f\n", auxvp_rela_pts - vp_rela_pts);
                 }
-                av_log(NULL, AV_LOG_FATAL, "auxvp->pts %f auxvp_rela_pts %f  |  vp->pts %f, vp_rela_pts %f\n", auxvp->pts, auxvp_rela_pts, vp->pts, vp_rela_pts);
+                //av_log(NULL, AV_LOG_FATAL, "auxvp->pts %f auxvp_rela_pts %f  |  vp->pts %f, vp_rela_pts %f\n", auxvp->pts, auxvp_rela_pts, vp->pts, vp_rela_pts);
                 if(auxvp_rela_pts < vp_rela_pts + aux_duration) // aux stream is sychronized with main stream
                 {
                     frame_queue_next(&aux_is->pictq);
@@ -3691,8 +3710,8 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
             }
             if(mouse_action == 0) // proceed seek mouse_action
             {
-                printf("seek not supported yet\n");
-                break;
+                //printf("seek not supported yet\n");
+                //break;
                 if (seek_by_bytes || cur_stream->ic->duration <= 0) {
                     uint64_t size =  avio_size(cur_stream->ic->pb);
                     stream_seek(cur_stream, size*x/cur_stream->width, 0, 1);
@@ -3716,6 +3735,7 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                     if (cur_stream->ic->start_time != AV_NOPTS_VALUE)
                         ts += cur_stream->ic->start_time;
                     stream_seek(cur_stream, ts, 0, 0);
+                    stream_seek(auxlilary_stream, ts, 0, 0);
                 }
             }
             else if(mouse_action == 1) // reset vert split position
@@ -3906,8 +3926,15 @@ static const OptionDef options[] = {
 
 static void show_usage(void)
 {
-    av_log(NULL, AV_LOG_INFO, "Simple media player\n");
-    av_log(NULL, AV_LOG_INFO, "usage: %s [options] input_file\n", program_name);
+    av_log(NULL, AV_LOG_FATAL, "Simple Video Comparision Tool Base on ffplay\n");
+    av_log(NULL, AV_LOG_FATAL, "usage: %s [options] input_file1, input_file2\n", program_name);
+    av_log(NULL, AV_LOG_INFO, "While playing:\n");
+    av_log(NULL, AV_LOG_INFO, "              q, ESC                quit\n");
+    av_log(NULL, AV_LOG_INFO, "              f                     toggle full screen\n");
+    av_log(NULL, AV_LOG_INFO, "              p, SPC                pause\n");
+    av_log(NULL, AV_LOG_INFO, "              s                     activate frame-step mode\n");
+    av_log(NULL, AV_LOG_INFO, "              right mouse click     seek to percentage in file corresponding to fraction of width\n");
+    av_log(NULL, AV_LOG_INFO, "              left  mouse click     move the vertical split line\n");
     av_log(NULL, AV_LOG_INFO, "\n");
 }
 
@@ -3993,10 +4020,9 @@ int main(int argc, char **argv)
     signal(SIGINT , sigterm_handler); /* Interrupt (ANSI).    */
     signal(SIGTERM, sigterm_handler); /* Termination (ANSI).  */
 
-    show_banner(argc, argv, options);
+    //show_banner(argc, argv, options);
 
     parse_options(NULL, argc, argv, options, opt_input_file);
-    printf("input_filenames = %s %s\n", input_filename[0], input_filename[1]);
 
     if (!input_filename[0]) {
         show_usage();
@@ -4005,6 +4031,8 @@ int main(int argc, char **argv)
                "Use -h to get full help or, even better, run 'man %s'\n", program_name);
         exit(1);
     }
+    if(input_filename[1]) // two input files means comparision mode, so disable audio
+        audio_disable = 1;
 
     if (display_disable) {
         video_disable = 1;
