@@ -60,7 +60,7 @@
 
 #include <assert.h>
 
-const char program_name[] = "ffplay";
+const char program_name[] = "VideoComparisionTool";
 const int program_birth_year = 2003;
 
 #define MAX_QUEUE_SIZE (15 * 1024 * 1024)
@@ -1715,7 +1715,7 @@ retry:
             {
                 double auxvp_rela_pts = auxvp->pts - aux_is->first_pts + aux_is->delay_frame_num * aux_duration;
                 double vp_rela_pts = vp->pts - is->first_pts + is->delay_frame_num * last_duration; 
-                while(auxvp_rela_pts < vp_rela_pts - aux_duration) // aux stream is slower than main stream
+                while(auxvp_rela_pts <= vp_rela_pts - aux_duration) // aux stream is slower than main stream
                 {
                     if (frame_queue_nb_remaining(&aux_is->pictq) > 1)
                         frame_queue_next(&aux_is->pictq);
@@ -1730,7 +1730,7 @@ retry:
                     frame_queue_next(&aux_is->pictq);
                     aux_is->force_refresh = 1;
                 }
-                if(auxvp_rela_pts > vp_rela_pts + 2) // if seek back, auxvp_pts would be greater than vp_pts, mush empty frame queue of aux_is
+                if(auxvp_rela_pts > vp_rela_pts + 2) // if seek back, auxvp_pts would be greater than vp_pts, must empty frame queue of aux_is
                     frame_queue_next(&aux_is->pictq);
             }
 
@@ -3522,7 +3522,7 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
     SDL_Event event;
     double incr, pos, frac;
     int mouse_action = 0; // 0 - seek, 1 - reset vert split position; other value - do nothing
-    Frame *vp;
+    Frame *vp, *lastvp, *auxvp, *auxlastvp;
     cur_stream->left_mouse_bt_stat = 0; // button up
     cur_stream->delay_frame_num = 0;
     if(auxlilary_stream)
@@ -3553,7 +3553,51 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
             case SDLK_p:
             case SDLK_SPACE:
                 toggle_pause(cur_stream);
-                toggle_pause(auxlilary_stream);
+                if(auxlilary_stream)
+                {
+                    double last_duration = 0.0, aux_duration = 0.0;
+                    double auxvp_rela_pts;
+                    double vp_rela_pts; 
+                    toggle_pause(auxlilary_stream); // need to synchronize two streams
+                    av_usleep((int64_t)(0.100 * 1000000.0)); // sleep 100ms, wait until pause operation finished, then continue synchronize two streams
+                     
+                    // continue synchronize two streams
+                    lastvp = frame_queue_peek_last(&cur_stream->pictq);
+                    vp = frame_queue_peek(&cur_stream->pictq);
+                    last_duration = vp_duration(cur_stream, lastvp, vp);
+                    auxvp = frame_queue_peek(&auxlilary_stream->pictq);
+                    auxlastvp = frame_queue_peek_last(&auxlilary_stream->pictq);
+                    aux_duration = vp_duration(auxlilary_stream, auxlastvp, auxvp);
+                    while(cur_stream->paused) // current stat is paused, need to synchronize
+                    {
+                        vp    = frame_queue_peek(&cur_stream->pictq);
+                        auxvp = frame_queue_peek(&auxlilary_stream->pictq);
+                        auxvp_rela_pts = auxvp->pts - auxlilary_stream->first_pts + auxlilary_stream->delay_frame_num * aux_duration;
+                        vp_rela_pts = vp->pts - cur_stream->first_pts + cur_stream->delay_frame_num * last_duration; 
+                        if(auxvp_rela_pts <= vp_rela_pts - 0.999 * aux_duration) // aux stream is slower than main stream
+                        {
+                            if (frame_queue_nb_remaining(&auxlilary_stream->pictq) > 1)
+                                frame_queue_next(&auxlilary_stream->pictq);  // move to next frame
+                        }
+                        else if(auxvp_rela_pts >= vp_rela_pts + aux_duration)  // aux stream is faster than main stream
+                        {
+                             if (frame_queue_nb_remaining(&cur_stream->pictq) > 1)
+                                frame_queue_next(&cur_stream->pictq);  // move to next frame
+                        }
+                        else if(auxvp_rela_pts < vp_rela_pts + 0.999 * aux_duration) // aux stream is sychronized with main stream
+                        {
+                            av_log(NULL, AV_LOG_INFO, "sync while paused: pts = %f, aux_pts = %f, aux_duration = %f, %f\n", vp_rela_pts, auxvp_rela_pts, aux_duration, vp_rela_pts + 0.999 * aux_duration);
+                            break;
+                        }
+                    }
+                    //vp    = frame_queue_peek(&cur_stream->pictq);
+                    //auxvp = frame_queue_peek(&auxlilary_stream->pictq);
+                    //auxvp_rela_pts = auxvp->pts - auxlilary_stream->first_pts + auxlilary_stream->delay_frame_num * aux_duration;
+                    //vp_rela_pts = vp->pts - cur_stream->first_pts + cur_stream->delay_frame_num * last_duration; 
+                    //av_log(NULL, AV_LOG_FATAL, "pts = %f, aux_pts = %f, diff_threshold = %f\n", vp_rela_pts, auxvp_rela_pts, aux_duration);
+                    video_display(cur_stream, auxlilary_stream);
+                }
+
                 break;
             case SDLK_m:
                 toggle_mute(cur_stream);
@@ -3568,7 +3612,8 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                 break;
             case SDLK_s: // S: Step to next frame
                 step_to_next_frame(cur_stream);
-                step_to_next_frame(auxlilary_stream);
+                if(auxlilary_stream)
+                    step_to_next_frame(auxlilary_stream);
                 break;
             case SDLK_F1:
                 if(auxlilary_stream)
@@ -3651,7 +3696,7 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
             case SDLK_DOWN:
                 incr = -60.0;
             do_seek:
-                printf("seek may not supported well yet\n");
+                //printf("seek may not supported well yet\n");
                 //break;
                     if (seek_by_bytes) {
                         int bkincr = incr;
@@ -3979,7 +4024,7 @@ static void show_usage(void)
     av_log(NULL, AV_LOG_FATAL, "Note :\n");
     av_log(NULL, AV_LOG_FATAL, "       There is a vertical split line in the middle of window, left side display input_file1, right side display input_file2\n");
     av_log(NULL, AV_LOG_FATAL, "       Click left mouse to move split line, or keep left mouse down, the vertical split line moves following mouse position\n");
-    av_log(NULL, AV_LOG_FATAL, "       To support seek, file format should be the same the two input files\n\n");
+    av_log(NULL, AV_LOG_FATAL, "       To support seek, file format should be the same between the two input files\n\n");
     av_log(NULL, AV_LOG_FATAL, "While playing:\n");
     av_log(NULL, AV_LOG_INFO,  "             q, ESC                quit\n");
     av_log(NULL, AV_LOG_INFO,  "             f                     toggle full screen\n");
@@ -3999,6 +4044,7 @@ void show_help_default(const char *opt, const char *arg)
 {
     av_log_set_callback(log_callback_help);
     show_usage();
+    return;
     show_help_options(options, "Main options:", 0, OPT_EXPERT, 0);
     show_help_options(options, "Advanced options:", OPT_EXPERT, 0, 0);
     printf("\n");
