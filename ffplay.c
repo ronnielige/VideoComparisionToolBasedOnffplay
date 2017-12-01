@@ -4023,9 +4023,9 @@ static void show_usage(void)
     av_log(NULL, AV_LOG_FATAL, "Visual Comparision Tool Based on ffplay\n");
     av_log(NULL, AV_LOG_FATAL, "Usage: %s [options] input_file1, input_file2\n", program_name);
     av_log(NULL, AV_LOG_FATAL, "Note :\n");
-    av_log(NULL, AV_LOG_FATAL, "       Left side of the vertical split line display input_file1, right side display input_file2\n");
-    av_log(NULL, AV_LOG_FATAL, "       Click left mouse to move the split line, or keep left mouse down, the vertical split line moves following mouse position\n");
-    av_log(NULL, AV_LOG_FATAL, "       To support seek, file format should be the same between the two input files\n\n");
+    av_log(NULL, AV_LOG_INFO,  "       input_file1 display at left side of the vertical split line, input_file2 display at right side\n");
+    av_log(NULL, AV_LOG_INFO,  "       Click left mouse to move the split line; Or keep left mouse down, then vertical split line moves following mouse movement\n");
+    av_log(NULL, AV_LOG_INFO,  "       To support seek, file format should be the same between the two input files\n\n");
     av_log(NULL, AV_LOG_FATAL, "While playing:\n");
     av_log(NULL, AV_LOG_INFO,  "             q, ESC                quit\n");
     av_log(NULL, AV_LOG_INFO,  "             f                     toggle full screen\n");
