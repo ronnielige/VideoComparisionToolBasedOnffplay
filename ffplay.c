@@ -60,7 +60,7 @@
 
 #include <assert.h>
 
-const char program_name[] = "VideoComparisionTool";
+const char program_name[] = "VCmpTool"; 
 const int program_birth_year = 2003;
 
 #define MAX_QUEUE_SIZE (15 * 1024 * 1024)
@@ -2334,7 +2334,6 @@ static int video_thread(void *arg)
         av_frame_free(&frame);
         return AVERROR(ENOMEM);
     }
-
 #endif
 
     if (!frame) {
@@ -2343,7 +2342,7 @@ static int video_thread(void *arg)
 #endif
         return AVERROR(ENOMEM);
     }
-
+    
     for (;;) {
         ret = get_video_frame(is, frame);
         if (ret < 0)
@@ -3027,18 +3026,20 @@ static int read_thread(void *arg)
     }
     ic->interrupt_callback.callback = decode_interrupt_cb;
     ic->interrupt_callback.opaque = is;
-    if (!av_dict_get(format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE)) {
-        av_dict_set(&format_opts, "scan_all_pmts", "1", AV_DICT_DONT_OVERWRITE);
-        scan_all_pmts_set = 1;
-    }
+    //if (!av_dict_get(format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE)) {
+    //    av_dict_set(&format_opts, "scan_all_pmts", "1", AV_DICT_DONT_OVERWRITE);
+    //    scan_all_pmts_set = 1;
+    //}
     err = avformat_open_input(&ic, is->filename, is->iformat, &format_opts);
+
     if (err < 0) {
         print_error(is->filename, err);
         ret = -1;
         goto fail;
     }
-    if (scan_all_pmts_set)
-        av_dict_set(&format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE);
+    
+    //if (scan_all_pmts_set)
+    //    av_dict_set(&format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE);
 
     //if ((t = av_dict_get(format_opts, "", NULL, AV_DICT_IGNORE_SUFFIX))) {
     //    av_log(NULL, AV_LOG_ERROR, "Option %s not found.\n", t->key);
@@ -3056,7 +3057,7 @@ static int read_thread(void *arg)
     orig_nb_streams = ic->nb_streams;
 
     err = avformat_find_stream_info(ic, opts);
-
+    
     for (i = 0; i < orig_nb_streams; i++)
         av_dict_free(&opts[i]);
     av_freep(&opts);
@@ -3586,7 +3587,7 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                         }
                         else if(auxvp_rela_pts < vp_rela_pts + 0.999 * aux_duration) // aux stream is sychronized with main stream
                         {
-                            av_log(NULL, AV_LOG_INFO, "sync while paused: pts = %f, aux_pts = %f, aux_duration = %f, %f\n", vp_rela_pts, auxvp_rela_pts, aux_duration, vp_rela_pts + 0.999 * aux_duration);
+                            //av_log(NULL, AV_LOG_INFO, "sync while paused: pts = %f, aux_pts = %f, aux_duration = %f, %f\n", vp_rela_pts, auxvp_rela_pts, aux_duration, vp_rela_pts + 0.999 * aux_duration);
                             break;
                         }
                     }
@@ -4019,11 +4020,11 @@ static const OptionDef options[] = {
 
 static void show_usage(void)
 {
-    av_log(NULL, AV_LOG_FATAL, "Video Comparision Tool Base on ffplay\n");
+    av_log(NULL, AV_LOG_FATAL, "Visual Comparision Tool Based on ffplay\n");
     av_log(NULL, AV_LOG_FATAL, "Usage: %s [options] input_file1, input_file2\n", program_name);
     av_log(NULL, AV_LOG_FATAL, "Note :\n");
-    av_log(NULL, AV_LOG_FATAL, "       There is a vertical split line in the middle of window, left side display input_file1, right side display input_file2\n");
-    av_log(NULL, AV_LOG_FATAL, "       Click left mouse to move split line, or keep left mouse down, the vertical split line moves following mouse position\n");
+    av_log(NULL, AV_LOG_FATAL, "       Left side of the vertical split line display input_file1, right side display input_file2\n");
+    av_log(NULL, AV_LOG_FATAL, "       Click left mouse to move the split line, or keep left mouse down, the vertical split line moves following mouse position\n");
     av_log(NULL, AV_LOG_FATAL, "       To support seek, file format should be the same between the two input files\n\n");
     av_log(NULL, AV_LOG_FATAL, "While playing:\n");
     av_log(NULL, AV_LOG_INFO,  "             q, ESC                quit\n");
