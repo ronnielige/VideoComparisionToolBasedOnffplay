@@ -156,6 +156,7 @@ typedef struct Frame {
     int serial;
     double pts;           /* presentation timestamp for the frame */
     double duration;      /* estimated duration of the frame */
+    long long dec_frame_num;
     int64_t pos;          /* byte position of the frame in the input file */
     int64_t cnt;
     SDL_Overlay *bmp;
@@ -957,22 +958,31 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
     if(aux_is)
     {
         char new_title[400];
-        int vns, vhh, vmm, vss, vms, ans, ahh, amm, ass, ams;
+        int vns = 0, vhh = 0, vmm = 0, vss = 0, vms = 0, ans = 0, ahh = 0, amm = 0, ass = 0, ams = 0;
         aux_vp = frame_queue_peek_last(&aux_is->pictq);
         // set window title to show played time for each file
-        vns  = (int)vp->pts;
-        vhh  = vns / 3600;
-        vmm  = (vns % 3600) / 60;
-        vss  = (vns % 60);
-        vms  = 1000 * (vp->pts - (vhh * 3600 + vmm * 60 + vss));
-        ans  = (int)aux_vp->pts;
-        ahh  = ans / 3600;
-        amm  = (ans % 3600) / 60;
-        ass  = (ans % 60);
-        ams  = 1000 * (aux_vp->pts - (ahh * 3600 + amm * 60 + ass));
-        if(input_filename[1])
-            sprintf(new_title, "%s  %2d:%02d:%02d.%03d <------->  %s  %2d:%02d:%02d.%03d", input_filename[0], vhh, vmm, vss, vms, input_filename[1], ahh, amm, ass, ams);
-        SDL_WM_SetCaption(new_title, new_title);
+        if(!isnan(vp->pts) && !isnan(aux_vp->pts)) // raw bitstream may have no pts
+        {        
+            vns  = (int)vp->pts;
+            vhh  = vns / 3600;
+            vmm  = (vns % 3600) / 60;
+            vss  = (vns % 60);
+            vms  = 1000 * (vp->pts - (vhh * 3600 + vmm * 60 + vss));
+            ans  = (int)aux_vp->pts;
+            ahh  = ans / 3600;
+            amm  = (ans % 3600) / 60;
+            ass  = (ans % 60);
+            ams  = 1000 * (aux_vp->pts - (ahh * 3600 + amm * 60 + ass));   
+            if(input_filename[1])
+                sprintf(new_title, "%s  %2d:%02d:%02d.%03d <------->  %s  %2d:%02d:%02d.%03d", input_filename[0], vhh, vmm, vss, vms, input_filename[1], ahh, amm, ass, ams);
+            SDL_WM_SetCaption(new_title, new_title);
+        }
+        else // if no pts, display frame number
+        {
+            if(input_filename[1])
+                sprintf(new_title, "%s  %lld frm <------->  %s  %lld frm", input_filename[0], vp->dec_frame_num, input_filename[1], aux_vp->dec_frame_num);
+            SDL_WM_SetCaption(new_title, new_title);
+        }
     }
         
     if (vp->bmp) {
@@ -1662,7 +1672,7 @@ retry:
             }
 
             time= av_gettime_relative()/1000000.0;
-            if (time < is->frame_timer + delay) { // means current frame arrived too early, need to wait, return remaining_time to wait
+            if (is->first_pts > 0 && time < is->frame_timer + delay) { // means current frame arrived too early, need to wait, return remaining_time to wait
                 //printf("frame arrived too early: time %f, is->frame_timer + delay %f, diff %f\n", time , is->frame_timer + delay, is->frame_timer + delay - time);
                 *remaining_time = FFMIN(is->frame_timer + delay - time, *remaining_time);
                 goto display;
@@ -1682,7 +1692,7 @@ retry:
             if (frame_queue_nb_remaining(&is->pictq) > 1) {
                 Frame *nextvp = frame_queue_peek_next(&is->pictq);
                 duration = vp_duration(is, vp, nextvp);
-                if(!is->step && (framedrop>0 || (framedrop && get_master_sync_type(is) != AV_SYNC_VIDEO_MASTER)) && time > is->frame_timer + duration){
+                if(is->first_pts > 0 && !is->step && (framedrop>0 || (framedrop && get_master_sync_type(is) != AV_SYNC_VIDEO_MASTER)) && time > is->frame_timer + duration){
                     is->frame_drops_late++;  // current frame is late, drop it
                     frame_queue_next(&is->pictq);
                     goto retry;
@@ -1713,25 +1723,44 @@ retry:
             is->force_refresh = 1;
             if(aux_is) 
             {
-                double auxvp_rela_pts = auxvp->pts - aux_is->first_pts + aux_is->delay_frame_num * aux_duration;
-                double vp_rela_pts = vp->pts - is->first_pts + is->delay_frame_num * last_duration; 
-                while(auxvp_rela_pts <= vp_rela_pts - aux_duration) // aux stream is slower than main stream
+                if(is->first_pts > 0 && aux_is->first_pts > 0) // stream contains pts
                 {
-                    if (frame_queue_nb_remaining(&aux_is->pictq) > 1)
+                    double auxvp_rela_pts = auxvp->pts - aux_is->first_pts + aux_is->delay_frame_num * aux_duration;
+                    double vp_rela_pts = vp->pts - is->first_pts + is->delay_frame_num * last_duration; 
+                    while(auxvp_rela_pts <= vp_rela_pts - aux_duration) // aux stream is slower than main stream
+                    {
+                        if (frame_queue_nb_remaining(&aux_is->pictq) > 1)
+                            frame_queue_next(&aux_is->pictq);
+                        auxvp = frame_queue_peek(&aux_is->pictq);
+                        auxvp_rela_pts = auxvp->pts - aux_is->first_pts + aux_is->delay_frame_num * aux_duration;
+                        av_usleep((int64_t)(0.001 * 1000000.0)); // sleep 1ms
+                        //av_log(NULL, AV_LOG_INFO, "aux stream is slower than main stream, diff = %f\n", auxvp_rela_pts - vp_rela_pts);
+                    }
+                    //av_log(NULL, AV_LOG_FATAL, "auxvp->pts %f auxvp_rela_pts %f  |  vp->pts %f, vp_rela_pts %f\n", auxvp->pts, auxvp_rela_pts, vp->pts, vp_rela_pts);
+                    if(auxvp_rela_pts < vp_rela_pts + aux_duration) // aux stream is sychronized with main stream
+                    {
                         frame_queue_next(&aux_is->pictq);
-                    auxvp = frame_queue_peek(&aux_is->pictq);
-                    auxvp_rela_pts = auxvp->pts - aux_is->first_pts + aux_is->delay_frame_num * aux_duration;
-                    av_usleep((int64_t)(0.001 * 1000000.0)); // sleep 1ms
-                    //av_log(NULL, AV_LOG_INFO, "aux stream is slower than main stream, diff = %f\n", auxvp_rela_pts - vp_rela_pts);
+                        aux_is->force_refresh = 1;
+                    }
+                    if(auxvp_rela_pts > vp_rela_pts + 2) // if seek back, auxvp_pts would be greater than vp_pts, must empty frame queue of aux_is
+                        frame_queue_next(&aux_is->pictq);
                 }
-                //av_log(NULL, AV_LOG_FATAL, "auxvp->pts %f auxvp_rela_pts %f  |  vp->pts %f, vp_rela_pts %f\n", auxvp->pts, auxvp_rela_pts, vp->pts, vp_rela_pts);
-                if(auxvp_rela_pts < vp_rela_pts + aux_duration) // aux stream is sychronized with main stream
+                else
                 {
-                    frame_queue_next(&aux_is->pictq);
-                    aux_is->force_refresh = 1;
+                    while(auxvp->dec_frame_num + aux_is->delay_frame_num < vp->dec_frame_num + is->delay_frame_num) // aux stream is slower than main stream
+                    {
+                        if (frame_queue_nb_remaining(&aux_is->pictq) > 1)
+                            frame_queue_next(&aux_is->pictq);
+                        auxvp = frame_queue_peek(&aux_is->pictq);
+                        av_usleep((int64_t)(0.001 * 1000000.0)); // sleep 1ms
+                    }
+                    //av_log(NULL, AV_LOG_FATAL, "auxvp->pts %f auxvp_rela_pts %f  |  vp->pts %f, vp_rela_pts %f\n", auxvp->pts, auxvp_rela_pts, vp->pts, vp_rela_pts);
+                    if(auxvp->dec_frame_num + aux_is->delay_frame_num < vp->dec_frame_num + is->delay_frame_num + 1) // aux stream is sychronized with main stream
+                    {
+                        frame_queue_next(&aux_is->pictq);
+                        aux_is->force_refresh = 1;
+                    }
                 }
-                if(auxvp_rela_pts > vp_rela_pts + 2) // if seek back, auxvp_pts would be greater than vp_pts, must empty frame queue of aux_is
-                    frame_queue_next(&aux_is->pictq);
             }
 
             if (is->step && !is->paused)
@@ -1854,7 +1883,7 @@ static void duplicate_right_border_pixels(SDL_Overlay *bmp) {
     }
 }
 
-static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double duration, int64_t pos, int serial)
+static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double duration, int64_t pos, int serial, long long dec_frame_num)
 {
     Frame *vp;
 
@@ -1867,6 +1896,7 @@ static int queue_picture(VideoState *is, AVFrame *src_frame, double pts, double 
         return -1;
 
     vp->sar = src_frame->sample_aspect_ratio;
+    vp->dec_frame_num = dec_frame_num;
 
     /* alloc or resize hardware picture buffer */
     if (!vp->bmp || vp->reallocate || !vp->allocated ||
@@ -2318,6 +2348,7 @@ static int video_thread(void *arg)
     AVFrame *frame = av_frame_alloc();
     double pts;
     double duration;
+    long long dec_frame_num = 0;
     int ret;
     AVRational tb = is->video_st->time_base;
     AVRational frame_rate = av_guess_frame_rate(is->ic, is->video_st, NULL);
@@ -2349,7 +2380,9 @@ static int video_thread(void *arg)
             goto the_end;
         if (!ret)
             continue;
-
+            
+        dec_frame_num++;
+        
 #if CONFIG_AVFILTER
         if (   last_w != frame->width
             || last_h != frame->height
@@ -2403,7 +2436,7 @@ static int video_thread(void *arg)
 #endif
             duration = (frame_rate.num && frame_rate.den ? av_q2d((AVRational){frame_rate.den, frame_rate.num}) : 0);
             pts = (frame->pts == AV_NOPTS_VALUE) ? NAN : frame->pts * av_q2d(tb);
-            ret = queue_picture(is, frame, pts, duration, av_frame_get_pkt_pos(frame), is->viddec.pkt_serial);
+            ret = queue_picture(is, frame, pts, duration, av_frame_get_pkt_pos(frame), is->viddec.pkt_serial, dec_frame_num);
             if(is->first_pts < 0 && frame->pts != AV_NOPTS_VALUE)
                 is->first_pts = pts;
             av_frame_unref(frame);
@@ -3573,22 +3606,40 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
                     {
                         vp    = frame_queue_peek(&cur_stream->pictq);
                         auxvp = frame_queue_peek(&auxlilary_stream->pictq);
-                        auxvp_rela_pts = auxvp->pts - auxlilary_stream->first_pts + auxlilary_stream->delay_frame_num * aux_duration;
-                        vp_rela_pts = vp->pts - cur_stream->first_pts + cur_stream->delay_frame_num * last_duration; 
-                        if(auxvp_rela_pts <= vp_rela_pts - 0.999 * aux_duration) // aux stream is slower than main stream
+                        if(auxlilary_stream->first_pts >= 0 && cur_stream->delay_frame_num >= 0)
                         {
-                            if (frame_queue_nb_remaining(&auxlilary_stream->pictq) > 1)
-                                frame_queue_next(&auxlilary_stream->pictq);  // move to next frame
+                            auxvp_rela_pts = auxvp->pts - auxlilary_stream->first_pts + auxlilary_stream->delay_frame_num * aux_duration;
+                            vp_rela_pts = vp->pts - cur_stream->first_pts + cur_stream->delay_frame_num * last_duration; 
+                            if(auxvp_rela_pts <= vp_rela_pts - 0.999 * aux_duration) // aux stream is slower than main stream
+                            {
+                                if (frame_queue_nb_remaining(&auxlilary_stream->pictq) > 1)
+                                    frame_queue_next(&auxlilary_stream->pictq);  // move to next frame
+                            }
+                            else if(auxvp_rela_pts >= vp_rela_pts + aux_duration)  // aux stream is faster than main stream
+                            {
+                                 if (frame_queue_nb_remaining(&cur_stream->pictq) > 1)
+                                    frame_queue_next(&cur_stream->pictq);  // move to next frame
+                            }
+                            else if(auxvp_rela_pts < vp_rela_pts + 0.999 * aux_duration) // aux stream is sychronized with main stream
+                            {
+                                //av_log(NULL, AV_LOG_INFO, "sync while paused: pts = %f, aux_pts = %f, aux_duration = %f, %f\n", vp_rela_pts, auxvp_rela_pts, aux_duration, vp_rela_pts + 0.999 * aux_duration);
+                                break;
+                            } 
                         }
-                        else if(auxvp_rela_pts >= vp_rela_pts + aux_duration)  // aux stream is faster than main stream
+                        else
                         {
-                             if (frame_queue_nb_remaining(&cur_stream->pictq) > 1)
-                                frame_queue_next(&cur_stream->pictq);  // move to next frame
-                        }
-                        else if(auxvp_rela_pts < vp_rela_pts + 0.999 * aux_duration) // aux stream is sychronized with main stream
-                        {
-                            //av_log(NULL, AV_LOG_INFO, "sync while paused: pts = %f, aux_pts = %f, aux_duration = %f, %f\n", vp_rela_pts, auxvp_rela_pts, aux_duration, vp_rela_pts + 0.999 * aux_duration);
-                            break;
+                            if(auxvp->dec_frame_num + auxlilary_stream->delay_frame_num < vp->dec_frame_num + cur_stream->delay_frame_num)// aux stream is slower than main stream
+                            {
+                                if (frame_queue_nb_remaining(&auxlilary_stream->pictq) > 1)
+                                    frame_queue_next(&auxlilary_stream->pictq);  // move to next frame
+                            }
+                            else if(auxvp->dec_frame_num + auxlilary_stream->delay_frame_num > vp->dec_frame_num + cur_stream->delay_frame_num)// aux stream is faster than main stream
+                            {
+                                if (frame_queue_nb_remaining(&cur_stream->pictq) > 1)
+                                    frame_queue_next(&cur_stream->pictq);  // move to next frame
+                            }
+                            else
+                                break;
                         }
                     }
                     //vp    = frame_queue_peek(&cur_stream->pictq);
@@ -3970,9 +4021,11 @@ static int opt_codec(void *optctx, const char *opt, const char *arg)
 }
 
 static int dummy;
+static int is_move;
 
 static const OptionDef options[] = {
 #include "cmdutils_common_opts.h"
+    { "m", OPT_BOOL, { &is_move}, "move split line automaticlly"},
     { "x", HAS_ARG, { .func_arg = opt_width }, "force displayed width", "width" },
     { "y", HAS_ARG, { .func_arg = opt_height }, "force displayed height", "height" },
     { "s", HAS_ARG | OPT_VIDEO, { .func_arg = opt_frame_size }, "set frame size (WxH or abbreviation)", "size" },
@@ -4136,7 +4189,9 @@ int main(int argc, char **argv)
         exit(1);
     }
     if(input_filename[1]) // two input files means comparision mode, so disable audio
+    {
         audio_disable = 1;
+    }
 
     if (display_disable) {
         video_disable = 1;
@@ -4193,6 +4248,8 @@ int main(int argc, char **argv)
         
         while(is->viddec_width == 0 || is2->viddec_width == 0) // wait until read_thread has got the resolution information
             av_usleep((int64_t)(0.001 * 1000000.0)); // sleep 1ms
+        if(argc >= 4 && strcmp(argv[argc - 1], "-m") == 0)
+            is->mov_speed = is->viddec_width / 200;
             
         if(is->viddec_width != is2->viddec_width || is->viddec_height != is2->viddec_height)
         {

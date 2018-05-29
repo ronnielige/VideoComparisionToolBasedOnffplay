@@ -2148,7 +2148,7 @@
       </Compiler>
       <Linker Options="" Required="yes"/>
       <ResourceCompiler Options="" Required="no"/>
-      <General OutputFile="$(IntermediateDirectory)/$(ProjectName)" IntermediateDirectory="./Debug" Command="D:\Projects\ffmpeg-3.1.1\ffplay_g.exe " CommandArguments="G:\cctv5_3M_noBFastPu.ts G:\cctv5_3M_noBFastPu_nofastCu.ts" UseSeparateDebugArgs="no" DebugArguments="" WorkingDirectory="D:/Projects/ffmpeg-3.1.1/" PauseExecWhenProcTerminates="no" IsGUIProgram="yes" IsEnabled="yes"/>
+      <General OutputFile="$(IntermediateDirectory)/$(ProjectName)" IntermediateDirectory="./Debug" Command="D:\Projects\VisualCompareToolBasedOnFfmpeg\ffplay_g.exe " CommandArguments="D:\Projects\_encoders_pk_script_v1.0\output\x264_Bparkscene_fast_cbr5000.bin  D:\Projects\_encoders_pk_script_v1.0\output\x264_Bparkscene_fast_cbr2000.bin -m" UseSeparateDebugArgs="no" DebugArguments="" WorkingDirectory="D:/Projects/VisualCompareToolBasedOnFfmpeg/" PauseExecWhenProcTerminates="no" IsGUIProgram="yes" IsEnabled="yes"/>
       <Environment EnvVarSetName="&lt;Use Defaults&gt;" DbgSetName="&lt;Use Defaults&gt;">
         <![CDATA[]]>
       </Environment>

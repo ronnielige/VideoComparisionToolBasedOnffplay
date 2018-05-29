@@ -1,1 +1,1 @@
-config:x86:x86_32:generic:mingw32:gcc 4.8.1 (tdm-2):--disable-shared --enable-static
+config:x86:x86_32:generic:mingw32:gcc 4.8.1 (tdm-2):
