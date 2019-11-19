@@ -58,7 +58,7 @@
 #include <assert.h>
 
 int ver_major = 1;
-int ver_minor = 1;
+int ver_minor = 2;
 
 const char program_name[] = "VCmpTool"; 
 const int program_birth_year = 2003;
@@ -234,7 +234,6 @@ typedef struct VideoState {
     int scaleto_width;
     int scaleto_height;
 
-    int is_mainstream;
     int audio_stream;
     int av_sync_type;
 
@@ -3407,7 +3406,6 @@ static VideoState *stream_open(const char *filename, AVInputFormat *iformat)
     is->filename = av_strdup(filename);
     if (!is->filename)
         goto fail;
-    is->is_mainstream = 0;
     is->iformat = iformat;
     is->ytop    = 0;
     is->xleft   = 0;
@@ -3936,7 +3934,7 @@ static void event_loop(VideoState *cur_stream, VideoState *auxlilary_stream)
             else if(mouse_action == 1) // reset vert split position
             {
                 cur_stream->last_vert_split_pos = cur_stream->vert_split_pos;
-                cur_stream->vert_split_pos = x / cur_stream->width * cur_stream->viddec_width;
+                cur_stream->vert_split_pos = x / cur_stream->width * cur_stream->scaleto_width;
                 video_display(cur_stream, auxlilary_stream);
             }
             break;
@@ -4302,34 +4300,33 @@ int main(int argc, char **argv)
         while(is->viddec_width == 0 || is2->viddec_width == 0) // wait until read_thread has got the resolution information
             av_usleep((int64_t)(0.001 * 1000000.0)); // sleep 1ms
         
-        for(int i = 0; i < argc; i++)
-            if(strcmp(argv[i], "-m") == 0)
-                is->mov_speed = is->viddec_width / 400;
-        
         int  max_width = FFMAX(is->viddec_width,  is2->viddec_width);
         int max_height = FFMAX(is->viddec_height, is2->viddec_height);
         is->scaleto_width  = is2->scaleto_width  = max_width;
         is->scaleto_height = is2->scaleto_height = max_height;
-        if(is->viddec_width > is2->viddec_width)
-            is->is_mainstream = 1;
-        else
-            is2->is_mainstream = 1;
+                
+        for(int i = 0; i < argc; i++)
+            if(strcmp(argv[i], "-m") == 0)
+                is->mov_speed = is->scaleto_width / 400;
+        
+        is->bk_data[0]  = av_malloc(is->scaleto_width * is->scaleto_height);
+        is->bk_data[1]  = av_malloc(is->scaleto_width * is->scaleto_height / 2);
+        is->bk_data[2]  = av_malloc(is->scaleto_width * is->scaleto_height / 2);
+        is2->bk_data[0] = av_malloc(is2->scaleto_width * is2->scaleto_height);
+        is2->bk_data[1] = av_malloc(is2->scaleto_width * is2->scaleto_height / 2);
+        is2->bk_data[2] = av_malloc(is2->scaleto_width * is2->scaleto_height / 2);
         
         if(is->viddec_width != is2->viddec_width || is->viddec_height != is2->viddec_height)
             av_log(NULL, AV_LOG_WARNING, "Resolution doesn't match between two input files, Scale to %d x %d\n", is->scaleto_width, is->scaleto_height);
     }
-    else if(!input_filename[1])
-        is->is_mainstream = 1;
+
     
     if (!is) {
         av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState!\n");
         do_exit(NULL);
     }
-
-    if(is ->is_mainstream)
-        event_loop(is, is2);
-    else
-        event_loop(is2, is);
+    
+    event_loop(is, is2);
 
     /* never returns */
     return 0;
