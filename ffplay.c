@@ -58,7 +58,7 @@
 #include <assert.h>
 
 int ver_major = 1;
-int ver_minor = 2;
+int ver_minor = 3;
 
 const char program_name[] = "VCmpTool"; 
 const int program_birth_year = 2003;
@@ -4239,10 +4239,6 @@ int main(int argc, char **argv)
                "Use -h to get full help or, even better, run 'man %s'\n", program_name);
         exit(1);
     }
-    if(input_filename[1]) // two input files means comparision mode, so disable audio
-    {
-        audio_disable = 1;
-    }
 
     if (display_disable) {
         video_disable = 1;
@@ -4290,6 +4286,8 @@ int main(int argc, char **argv)
     is = stream_open(input_filename[0], file_iformat);
     if(input_filename[1])
     {
+        av_usleep((int64_t)(0.100 * 1000000.0)); // sleep 100ms wait first stream finish init
+        audio_disable = 1; // two input files means comparision mode, so disable audio of second stream
         is2 = stream_open(input_filename[1], file_iformat);
         if(!is2)
         {
