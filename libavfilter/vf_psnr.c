@@ -40,6 +40,7 @@ typedef struct PSNRContext {
     const AVClass *class;
     FFDualInputContext dinput;
     double mse, min_mse, max_mse, mse_comp[4];
+    double psnr_comp[4];
     uint64_t nb_frames;
     FILE *stats_file;
     char *stats_file_str;
@@ -167,6 +168,15 @@ static AVFrame *do_psnr(AVFilterContext *ctx, AVFrame *main,
     }
     set_meta(metadata, "lavfi.psnr.mse_avg", 0, mse);
     set_meta(metadata, "lavfi.psnr.psnr_avg", 0, get_psnr(mse, 1, s->average_max));
+
+    for (j = 0; j < s->nb_components; j++)
+        s->psnr_comp[j] += get_psnr(comp_mse[j], 1, s->max[j]);
+    
+    av_log(ctx, AV_LOG_INFO, "Y:%.3f U:%.3f V:%.3f  \n",
+           get_psnr(comp_mse[0], 1, s->max[0]),
+           get_psnr(comp_mse[1], 1, s->max[1]),
+           get_psnr(comp_mse[2], 1, s->max[2]));
+    
 
     if (s->stats_file) {
         fprintf(s->stats_file, "n:%"PRId64" mse_avg:%0.2f ", s->nb_frames, mse);
@@ -334,6 +344,14 @@ static av_cold void uninit(AVFilterContext *ctx)
                get_psnr(s->mse, s->nb_frames, s->average_max),
                get_psnr(s->max_mse, 1, s->average_max),
                get_psnr(s->min_mse, 1, s->average_max));
+
+        buf[0] = 0;
+        for (j = 0; j < s->nb_components; j++) {
+            int c = s->is_rgb ? s->rgba_map[j] : j;
+            av_strlcatf(buf, sizeof(buf), " %c:%f", s->comps[j],
+                        s->psnr_comp[c] / s->nb_frames);
+        }
+        av_log(ctx, AV_LOG_INFO, "PSNR average(x265 method): %s\n", buf);
     }
 
     ff_dualinput_uninit(&s->dinput);
