@@ -202,6 +202,9 @@ static AVFrame *do_ssim(AVFilterContext *ctx, AVFrame *main,
     }
     s->ssim_total += ssimv;
 
+    av_log(ctx, AV_LOG_INFO, "Frame %5lld:  Y:%.3f  U:%.3f  V:%.3f\n",
+           s->nb_frames, c[0], c[1], c[2]);
+
     set_meta(metadata, "lavfi.ssim.All", 0, ssimv);
     set_meta(metadata, "lavfi.ssim.dB", 0, ssim_db(ssimv, 1.0));
 
@@ -296,6 +299,10 @@ static int config_input_ref(AVFilterLink *inlink)
         sum += s->planeheight[i] * s->planewidth[i];
     for (i = 0; i < s->nb_components; i++)
         s->coefs[i] = (double) s->planeheight[i] * s->planewidth[i] / sum;
+    av_log(ctx, AV_LOG_INFO, "planewidth = (%d, %d, %d), planeheight = (%d, %d, %d), coef = (%.2f, %.2f, %.2f)\n", 
+           s->planewidth[0],  s->planewidth[1],  s->planewidth[2], 
+           s->planeheight[0], s->planeheight[1], s->planeheight[2],
+           s->coefs[0], s->coefs[1], s->coefs[2]);
 
     s->temp = av_malloc((2 * inlink->w + 12) * sizeof(*s->temp));
     if (!s->temp)

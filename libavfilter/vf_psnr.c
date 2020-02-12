@@ -172,7 +172,8 @@ static AVFrame *do_psnr(AVFilterContext *ctx, AVFrame *main,
     for (j = 0; j < s->nb_components; j++)
         s->psnr_comp[j] += get_psnr(comp_mse[j], 1, s->max[j]);
     
-    av_log(ctx, AV_LOG_INFO, "Y:%.3f U:%.3f V:%.3f  \n",
+    av_log(ctx, AV_LOG_INFO, "Frame %5lld:  Y:%.3f U:%.3f V:%.3f  \n",
+           s->nb_frames,   
            get_psnr(comp_mse[0], 1, s->max[0]),
            get_psnr(comp_mse[1], 1, s->max[1]),
            get_psnr(comp_mse[2], 1, s->max[2]));
@@ -336,7 +337,7 @@ static av_cold void uninit(AVFilterContext *ctx)
         buf[0] = 0;
         for (j = 0; j < s->nb_components; j++) {
             int c = s->is_rgb ? s->rgba_map[j] : j;
-            av_strlcatf(buf, sizeof(buf), " %c:%f", s->comps[j],
+            av_strlcatf(buf, sizeof(buf), " %c:%6.3f", s->comps[j],
                         get_psnr(s->mse_comp[c], s->nb_frames, s->max[c]));
         }
         av_log(ctx, AV_LOG_INFO, "PSNR%s average:%f min:%f max:%f\n",
@@ -348,7 +349,7 @@ static av_cold void uninit(AVFilterContext *ctx)
         buf[0] = 0;
         for (j = 0; j < s->nb_components; j++) {
             int c = s->is_rgb ? s->rgba_map[j] : j;
-            av_strlcatf(buf, sizeof(buf), " %c:%f", s->comps[j],
+            av_strlcatf(buf, sizeof(buf), " %c:%6.3f", s->comps[j],
                         s->psnr_comp[c] / s->nb_frames);
         }
         av_log(ctx, AV_LOG_INFO, "PSNR average(x265 method): %s\n", buf);
